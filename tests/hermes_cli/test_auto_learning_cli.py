@@ -39,6 +39,24 @@ def test_cli_autolearning_list_routes_status_filter(monkeypatch):
 
 
 
+def test_cli_autolearning_search_routes_query(monkeypatch):
+    import hermes_cli.main as main_mod
+
+    captured = {}
+
+    def fake_cmd_auto_learning(args):
+        captured["action"] = args.auto_learning_action
+        captured["query"] = args.query
+
+    monkeypatch.setattr(main_mod, "cmd_auto_learning", fake_cmd_auto_learning)
+    monkeypatch.setattr(sys, "argv", ["hermes", "autolearning", "search", "concise"])
+
+    main_mod.main()
+
+    assert captured == {"action": "search", "query": "concise"}
+
+
+
 def test_auto_learning_command_enable_updates_config(monkeypatch):
     from hermes_cli.auto_learning import auto_learning_command
 
@@ -225,3 +243,78 @@ def test_auto_learning_command_promote_and_reject_update_store(tmp_path, monkeyp
     assert store.list_candidates(status="rejected")[0]["id"] == second["id"]
 
 
+
+
+
+def test_auto_learning_status_surfaces_manual_review_and_shadow_breakdowns(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    entry = store.add_candidate(
+        category="memory",
+        summary="User prefers verbose responses",
+        confidence=0.52,
+        evidence={
+            "quality": {
+                "shadow_decision": "manual_review",
+                "review_required": True,
+                "contradictions": {"has_contradiction": True},
+            }
+        },
+        target="user",
+    )
+    store.mark_status(entry["id"], "manual_review")
+
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr(
+        "hermes_cli.auto_learning.load_config",
+        lambda: {
+            "model": "anthropic/claude-opus-4.6",
+            "auto_learning": {"enabled": True, "reviewer": {}, "verifier": {}},
+        },
+    )
+
+    class Args:
+        auto_learning_action = "status"
+
+    auto_learning_command(Args())
+
+    out = capsys.readouterr().out
+    assert "manual_review: 1" in out
+    assert "Quality outcomes:" in out
+    assert "manual_review: 1" in out
+
+
+
+def test_auto_learning_search_and_show_surface_candidate_details(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    entry = store.add_candidate(
+        category="memory",
+        summary="User prefers concise responses",
+        confidence=0.73,
+        evidence={"quality": {"semantic_key": "memory|user|concise|response"}, "hook_reason": "explicit_user_correction"},
+        target="user",
+    )
+
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr("hermes_cli.auto_learning.load_config", lambda: {"auto_learning": {"enabled": True}})
+
+    class SearchArgs:
+        auto_learning_action = "search"
+        query = "concise"
+        status = None
+
+    auto_learning_command(SearchArgs())
+    search_out = capsys.readouterr().out
+    assert entry["id"] in search_out
+
+    class ShowArgs:
+        auto_learning_action = "show"
+        id = entry["id"]
+
+    auto_learning_command(ShowArgs())
+    show_out = capsys.readouterr().out
+    assert "semantic_key" in show_out
+    assert "explicit_user_correction" in show_out

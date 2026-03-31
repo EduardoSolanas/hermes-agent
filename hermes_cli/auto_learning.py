@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from hermes_cli.config import load_config, set_config_value
 from tools.auto_learning_store import AutoLearningStore
@@ -73,6 +74,18 @@ def _count_by_verifier_outcome(items: list[dict]) -> dict[str, int]:
     return counts
 
 
+def _count_by_quality_outcome(items: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        quality = evidence.get("quality") if isinstance(evidence.get("quality"), dict) else {}
+        key = str(quality.get("shadow_decision") or "").strip()
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def _print_count_block(label: str, counts: dict[str, int]) -> None:
     if not counts:
         return
@@ -105,6 +118,11 @@ def _format_candidate_inspection(item: dict) -> str | None:
     if verifier_summary:
         details.append(f"verifier={verifier_summary}")
 
+    quality = evidence.get("quality") if isinstance(evidence.get("quality"), dict) else {}
+    semantic_key = str(quality.get("semantic_key") or "").strip()
+    if semantic_key:
+        details.append(f"semantic_key={semantic_key}")
+
     if not details:
         return None
     return "  " + "  ".join(details)
@@ -130,6 +148,7 @@ def auto_learning_command(args) -> None:
         _print_count_block("Statuses:", _count_by_status(items))
         _print_count_block("Hook reasons:", _count_by_hook_reason(items))
         _print_count_block("Verifier outcomes:", _count_by_verifier_outcome(items))
+        _print_count_block("Quality outcomes:", _count_by_quality_outcome(items))
         return
 
     if action == "enable":
@@ -154,6 +173,25 @@ def auto_learning_command(args) -> None:
             inspection = _format_candidate_inspection(item)
             if inspection:
                 print(inspection)
+        return
+
+    if action == "search":
+        items = store.search_candidates(getattr(args, "query", ""), status=getattr(args, "status", None))
+        if not items:
+            print("No staged auto-learning candidates matched.")
+            return
+        for item in items:
+            print(f"{item['id']}  [{item.get('status', 'candidate')}]  {item.get('category', 'unknown')}  {item.get('summary', '')}")
+            inspection = _format_candidate_inspection(item)
+            if inspection:
+                print(inspection)
+        return
+
+    if action == "show":
+        item = store.get_candidate(args.id)
+        if not item:
+            raise SystemExit(f"Unknown candidate id: {args.id}")
+        print(json.dumps(item, indent=2, ensure_ascii=False, sort_keys=True))
         return
 
     if action == "promote":

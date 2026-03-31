@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from agent.auto_learning import candidate_semantic_key, candidates_semantically_overlap
 from hermes_cli.config import get_hermes_home
 
 
-VALID_STATUSES = {"candidate", "promoted", "rejected", "superseded"}
+VALID_STATUSES = {"candidate", "promoted", "rejected", "superseded", "manual_review"}
 VALID_CATEGORIES = {"memory", "skill", "unknown"}
 
 
@@ -35,6 +36,7 @@ class AutoLearningStore:
     ) -> dict[str, Any]:
         normalized_category = category if category in VALID_CATEGORIES else "unknown"
         normalized_summary = summary.strip()
+        normalized_payload = payload if isinstance(payload, dict) else {}
         fingerprint = self._make_fingerprint(
             category=normalized_category,
             summary=normalized_summary,
@@ -46,6 +48,15 @@ class AutoLearningStore:
         if existing is not None:
             return existing
 
+        semantic_key = candidate_semantic_key(
+            {
+                "category": normalized_category,
+                "summary": normalized_summary,
+                "target": target or "",
+                "payload": normalized_payload,
+            }
+        )
+
         entry = {
             "id": f"al-{uuid4().hex[:12]}",
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -55,6 +66,7 @@ class AutoLearningStore:
             "confidence": confidence,
             "evidence": evidence,
             "fingerprint": fingerprint,
+            "semantic_key": semantic_key,
         }
         if action is not None:
             entry["action"] = action
@@ -64,6 +76,16 @@ class AutoLearningStore:
             entry["payload"] = payload
 
         items = self._load_items()
+        overlap = self._find_semantic_overlap(items, entry)
+        if overlap is not None:
+            if float(entry.get("confidence", 0.0) or 0.0) > float(overlap.get("confidence", 0.0) or 0.0):
+                overlap["status"] = "superseded"
+                overlap["superseded_by"] = entry["id"]
+                entry["supersedes"] = overlap["id"]
+            else:
+                entry["status"] = "superseded"
+                entry["superseded_by"] = overlap["id"]
+                overlap.setdefault("supersedes", [])
         items.append(entry)
         self._save_items(items)
         return entry
@@ -73,6 +95,12 @@ class AutoLearningStore:
         if status is None:
             return items
         return [item for item in items if item.get("status") == status]
+
+    def get_candidate(self, entry_id: str) -> dict[str, Any] | None:
+        for item in self._load_items():
+            if item.get("id") == entry_id:
+                return item
+        return None
 
     def mark_status(self, entry_id: str, status: str, note: str | None = None) -> dict[str, Any]:
         if status not in VALID_STATUSES:
@@ -88,9 +116,40 @@ class AutoLearningStore:
                 return item
         raise KeyError(entry_id)
 
+    def update_candidate(self, entry_id: str, **updates: Any) -> dict[str, Any]:
+        items = self._load_items()
+        for item in items:
+            if item.get("id") == entry_id:
+                item.update(updates)
+                self._save_items(items)
+                return item
+        raise KeyError(entry_id)
+
     def find_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         for item in self._load_items():
             if item.get("fingerprint") == fingerprint:
+                return item
+        return None
+
+    def search_candidates(self, query: str, status: str | None = None) -> list[dict[str, Any]]:
+        tokens = [token for token in str(query or "").strip().lower().split() if token]
+        if not tokens:
+            return self.list_candidates(status=status)
+
+        matches: list[dict[str, Any]] = []
+        for item in self.list_candidates(status=status):
+            haystack = json.dumps(item, sort_keys=True).lower()
+            if all(token in haystack for token in tokens):
+                matches.append(item)
+        return matches
+
+    def _find_semantic_overlap(self, items: list[dict[str, Any]], entry: dict[str, Any]) -> dict[str, Any] | None:
+        for item in reversed(items):
+            if item.get("status") not in {"candidate", "manual_review", "promoted"}:
+                continue
+            if item.get("category") != entry.get("category"):
+                continue
+            if candidates_semantically_overlap(item, entry):
                 return item
         return None
 

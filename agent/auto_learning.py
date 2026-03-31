@@ -1,10 +1,52 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 VALID_CATEGORIES = {"memory", "skill", "unknown"}
 VALID_VERIFIER_DISPOSITIONS = {"approve", "reject", "downscore"}
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "answers",
+    "answer",
+    "for",
+    "likes",
+    "prefers",
+    "preference",
+    "response",
+    "responses",
+    "the",
+    "to",
+    "user",
+}
+
+_SYNONYMS = {
+    "brief": "concise",
+    "briefly": "concise",
+    "briefer": "concise",
+    "concisely": "concise",
+    "short": "concise",
+    "shorter": "concise",
+    "verbose": "verbose",
+    "verbosity": "verbose",
+    "detailed": "verbose",
+    "detail": "verbose",
+    "long": "verbose",
+    "longer": "verbose",
+    "answers": "response",
+    "answer": "response",
+    "responses": "response",
+    "likes": "prefer",
+    "prefers": "prefer",
+}
+
+_OPPOSITES = {
+    "concise": "verbose",
+    "verbose": "concise",
+}
 
 
 def build_auto_learning_review_prompt(
@@ -39,7 +81,6 @@ def build_auto_learning_review_prompt(
     )
 
 
-
 def build_auto_learning_verifier_prompt(
     *,
     candidates: list[dict[str, Any]],
@@ -60,7 +101,6 @@ def build_auto_learning_verifier_prompt(
         "Candidates to verify:\n"
         f"{json.dumps(candidates, ensure_ascii=False, sort_keys=True)}"
     )
-
 
 
 def normalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +127,108 @@ def normalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _tokenize_semantic_text(text: str) -> list[str]:
+    tokens = re.findall(r"[a-z0-9]+", str(text or "").lower())
+    normalized: list[str] = []
+    for token in tokens:
+        canonical = _SYNONYMS.get(token, token)
+        if canonical in _STOPWORDS:
+            continue
+        normalized.append(canonical)
+    return normalized
+
+
+def _candidate_semantic_topic(candidate: dict[str, Any]) -> list[str]:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    parts = [
+        str(candidate.get("summary") or ""),
+        str(payload.get("content") or ""),
+        str(candidate.get("target") or ""),
+    ]
+    tokens = _tokenize_semantic_text(" ".join(parts))
+    return sorted(dict.fromkeys(tokens))
+
+
+def candidate_semantic_key(candidate: dict[str, Any]) -> str:
+    normalized = normalize_candidate(candidate)
+    payload = normalized.get("payload") if isinstance(normalized.get("payload"), dict) else {}
+    action = str(payload.get("action") or "").strip().lower()
+    target = str(normalized.get("target") or "").strip().lower()
+    topic = "|".join(_candidate_semantic_topic(normalized)) or "generic"
+    return f"{normalized['category']}|{target}|{action}|{topic}"
+
+
+def candidates_semantically_overlap(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    return candidate_semantic_key(first) == candidate_semantic_key(second)
+
+
+def _candidate_polarity(candidate: dict[str, Any]) -> str | None:
+    tokens = set(_candidate_semantic_topic(candidate))
+    if "concise" in tokens:
+        return "concise"
+    if "verbose" in tokens:
+        return "verbose"
+    return None
+
+
+def _entry_to_candidate_like(entry: Any) -> dict[str, Any]:
+    if isinstance(entry, dict):
+        return {
+            "category": entry.get("category", "memory"),
+            "summary": entry.get("summary", ""),
+            "target": entry.get("target", "user"),
+            "payload": entry.get("payload") if isinstance(entry.get("payload"), dict) else {},
+        }
+    return {
+        "category": "memory",
+        "summary": str(entry or ""),
+        "target": "user",
+        "payload": {"action": "add", "content": str(entry or "")},
+    }
+
+
+def detect_candidate_contradictions(
+    candidate: dict[str, Any],
+    *,
+    durable_entries: list[Any] | None = None,
+    staged_candidates: list[Any] | None = None,
+) -> dict[str, Any]:
+    candidate_like = _entry_to_candidate_like(candidate)
+    candidate_polarity = _candidate_polarity(candidate_like)
+    if not candidate_polarity:
+        return {
+            "has_contradiction": False,
+            "review_required": False,
+            "matches": [],
+        }
+
+    opposite = _OPPOSITES.get(candidate_polarity)
+    matches: list[dict[str, Any]] = []
+    for source, entries in (
+        ("durable", durable_entries or []),
+        ("staged", staged_candidates or []),
+    ):
+        for entry in entries:
+            entry_like = _entry_to_candidate_like(entry)
+            entry_polarity = _candidate_polarity(entry_like)
+            if entry_polarity != opposite:
+                continue
+            if str(entry_like.get("target") or "user").strip().lower() != str(candidate_like.get("target") or "user").strip().lower():
+                continue
+            matches.append(
+                {
+                    "source": source,
+                    "summary": entry_like.get("summary", ""),
+                    "polarity": entry_polarity,
+                }
+            )
+
+    return {
+        "has_contradiction": bool(matches),
+        "review_required": bool(matches),
+        "matches": matches,
+    }
+
 
 def parse_auto_learning_review(text: str) -> list[dict[str, Any]]:
     try:
@@ -103,7 +245,6 @@ def parse_auto_learning_review(text: str) -> list[dict[str, Any]]:
         if isinstance(candidate, dict):
             normalized_candidates.append(normalize_candidate(candidate))
     return normalized_candidates
-
 
 
 def normalize_verifier_decision(decision: dict[str, Any]) -> dict[str, Any] | None:
@@ -132,7 +273,6 @@ def normalize_verifier_decision(decision: dict[str, Any]) -> dict[str, Any] | No
     }
 
 
-
 def parse_auto_learning_verifier_review(text: str) -> list[dict[str, Any]]:
     try:
         parsed = json.loads(text)
@@ -152,7 +292,6 @@ def parse_auto_learning_verifier_review(text: str) -> list[dict[str, Any]]:
             return []
         normalized_decisions.append(normalized)
     return normalized_decisions
-
 
 
 def should_promote_candidate(candidate: dict[str, Any], threshold: float) -> bool:

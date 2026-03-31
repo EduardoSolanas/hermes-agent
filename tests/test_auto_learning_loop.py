@@ -491,6 +491,75 @@ def test_auto_learning_review_dedupes_duplicate_candidate(tmp_path):
     assert len(items) == 1
 
 
+
+def test_auto_learning_review_routes_contradictory_memory_to_manual_review(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": True,
+            "auto_promote_skills": False,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+        }
+    )
+    agent._memory_store = MagicMock()
+    agent._memory_store.user_entries = ["User prefers concise responses"]
+    agent._memory_store.memory_entries = []
+
+    review_text = (
+        '{"candidates": ['
+        '{"category": "memory", "summary": "User prefers verbose responses", '
+        '"confidence": 0.94, "reason": "new correction", "target": "user", '
+        '"payload": {"action": "add", "content": "User prefers verbose responses."}}]}'
+    )
+
+    with patch("tools.memory_tool.memory_tool") as mock_memory_tool:
+        result = agent._process_auto_learning_review_result(review_text)
+
+    items = agent._auto_learning_store.list_candidates(status="manual_review")
+    assert result["manual_review"] == 1
+    assert len(items) == 1
+    assert items[0]["evidence"]["quality"]["contradictions"]["has_contradiction"] is True
+    mock_memory_tool.assert_not_called()
+
+
+
+def test_auto_learning_review_records_semantic_supersession_for_variant_wording(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": False,
+            "auto_promote_skills": False,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+        }
+    )
+
+    first = agent._process_auto_learning_review_result(
+        '{"candidates": [{"category": "memory", "summary": "User prefers concise responses", "confidence": 0.55, "reason": "signal", "target": "user", "payload": {"action": "add", "content": "User prefers concise responses."}}]}'
+    )
+    second = agent._process_auto_learning_review_result(
+        '{"candidates": [{"category": "memory", "summary": "User likes brief answers", "confidence": 0.87, "reason": "stronger signal", "target": "user", "payload": {"action": "add", "content": "User likes brief answers."}}]}'
+    )
+
+    items = agent._auto_learning_store.list_candidates()
+    assert first["staged"] == 1
+    assert second["superseded"] == 1
+    assert len(items) == 2
+    assert len([item for item in items if item["status"] == "superseded"]) == 1
+
+
+
 def test_run_conversation_spawns_background_auto_learning_review_when_triggered(tmp_path):
     agent = _make_agent(
         {

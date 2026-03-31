@@ -117,3 +117,58 @@ def test_candidate_store_find_by_fingerprint(tmp_path, monkeypatch):
 
     assert found is not None
     assert found["id"] == entry["id"]
+
+
+
+def test_candidate_store_supersedes_semantic_overlap_with_higher_confidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    from tools.auto_learning_store import AutoLearningStore
+
+    store = AutoLearningStore(max_entries=10)
+    first = store.add_candidate(
+        category="memory",
+        summary="User prefers concise responses",
+        confidence=0.61,
+        evidence={"source": "post_task_review"},
+        target="user",
+        payload={"action": "add", "content": "User prefers concise responses."},
+    )
+    second = store.add_candidate(
+        category="memory",
+        summary="User likes brief answers",
+        confidence=0.89,
+        evidence={"source": "reviewer"},
+        target="user",
+        payload={"action": "add", "content": "User likes brief answers."},
+    )
+
+    items = store.list_candidates()
+    assert len(items) == 2
+    superseded = [item for item in items if item["status"] == "superseded"]
+    active = [item for item in items if item["status"] == "candidate"]
+    assert superseded[0]["id"] == first["id"]
+    assert active[0]["id"] == second["id"]
+    assert active[0]["semantic_key"] == superseded[0]["semantic_key"]
+
+
+
+def test_candidate_store_search_candidates_matches_summary_and_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    from tools.auto_learning_store import AutoLearningStore
+
+    store = AutoLearningStore(max_entries=10)
+    entry = store.add_candidate(
+        category="memory",
+        summary="User prefers concise responses",
+        confidence=0.84,
+        evidence={"hook_reason": "failure_recovery", "transcript_excerpt": "Recovered after a failed verbose answer."},
+        target="user",
+    )
+
+    summary_hits = store.search_candidates("concise")
+    evidence_hits = store.search_candidates("failure_recovery")
+
+    assert [item["id"] for item in summary_hits] == [entry["id"]]
+    assert [item["id"] for item in evidence_hits] == [entry["id"]]

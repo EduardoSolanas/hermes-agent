@@ -3,6 +3,9 @@ import json
 from agent.auto_learning import (
     build_auto_learning_review_prompt,
     build_auto_learning_verifier_prompt,
+    candidate_semantic_key,
+    candidates_semantically_overlap,
+    detect_candidate_contradictions,
     normalize_candidate,
     normalize_verifier_decision,
     parse_auto_learning_review,
@@ -210,3 +213,69 @@ def test_should_promote_candidate_uses_threshold():
 
     assert should_promote_candidate(candidate, 0.8) is True
     assert should_promote_candidate(candidate, 0.9) is False
+
+
+
+def test_candidate_semantic_key_normalizes_wording_variants():
+    first = candidate_semantic_key(
+        {
+            "category": "memory",
+            "summary": "User prefers concise responses",
+            "target": "user",
+            "payload": {"action": "add", "content": "User prefers concise responses."},
+        }
+    )
+    second = candidate_semantic_key(
+        {
+            "category": "memory",
+            "summary": "User likes brief answers",
+            "target": "user",
+            "payload": {"action": "add", "content": "User likes brief answers."},
+        }
+    )
+
+    assert first == second
+    assert "memory" in first
+    assert "user" in first
+
+
+
+def test_candidates_semantically_overlap_on_wording_variants():
+    assert candidates_semantically_overlap(
+        {
+            "category": "memory",
+            "summary": "User prefers concise responses",
+            "target": "user",
+            "payload": {"action": "add", "content": "User prefers concise responses."},
+        },
+        {
+            "category": "memory",
+            "summary": "User likes brief answers",
+            "target": "user",
+            "payload": {"action": "add", "content": "User likes brief answers."},
+        },
+    ) is True
+
+
+
+def test_detect_candidate_contradictions_against_durable_entries():
+    contradiction = detect_candidate_contradictions(
+        {
+            "category": "memory",
+            "summary": "User prefers verbose responses",
+            "target": "user",
+            "payload": {"action": "add", "content": "User prefers verbose responses."},
+        },
+        durable_entries=["User prefers concise responses"],
+        staged_candidates=[
+            {
+                "category": "memory",
+                "summary": "User prefers brief answers",
+                "target": "user",
+            }
+        ],
+    )
+
+    assert contradiction["has_contradiction"] is True
+    assert contradiction["review_required"] is True
+    assert contradiction["matches"]

@@ -1838,14 +1838,55 @@ class AIAgent:
         )
         return resolved
 
+    def _get_durable_auto_learning_entries(self, candidate: Dict[str, Any]) -> List[str]:
+        target = str(candidate.get("target") or "").strip().lower()
+        if not self._memory_store:
+            return []
+        if target == "user":
+            return list(getattr(self._memory_store, "user_entries", []) or [])
+        return list(getattr(self._memory_store, "memory_entries", []) or [])
+
+    def _assess_auto_learning_candidate_quality(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        from agent.auto_learning import candidate_semantic_key, detect_candidate_contradictions
+
+        durable_entries = self._get_durable_auto_learning_entries(candidate)
+        staged_candidates = []
+        if self._auto_learning_store:
+            staged_candidates = [
+                item for item in self._auto_learning_store.list_candidates()
+                if item.get("status") in {"candidate", "manual_review", "promoted"}
+            ]
+
+        contradictions = detect_candidate_contradictions(
+            candidate,
+            durable_entries=durable_entries,
+            staged_candidates=staged_candidates,
+        )
+        review_required = bool(contradictions.get("review_required"))
+        shadow_decision = "candidate"
+        if contradictions.get("has_contradiction"):
+            shadow_decision = "manual_review"
+
+        return {
+            "semantic_key": candidate_semantic_key(candidate),
+            "contradictions": contradictions,
+            "review_required": review_required,
+            "shadow_decision": shadow_decision,
+        }
+
     def _promote_auto_learning_candidate(self, entry: Dict[str, Any]) -> str:
         category = entry.get("category", "unknown")
         payload = entry.get("payload") or {}
+        evidence = entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {}
+        quality = evidence.get("quality") if isinstance(evidence.get("quality"), dict) else {}
         threshold = float(self._auto_learning_config.get("promotion_threshold", 0.80) or 0.80)
         from agent.auto_learning import should_promote_candidate
 
+        if quality.get("review_required"):
+            return "manual_review"
+
         if not should_promote_candidate(entry, threshold):
-            return "candidate"
+            return entry.get("status") or "candidate"
 
         if category == "memory" and self._auto_learning_config.get("auto_promote_memory", True):
             from tools.memory_tool import memory_tool as _memory_tool
@@ -1870,8 +1911,11 @@ class AIAgent:
             return "rejected"
 
         if category == "skill" and self._auto_learning_config.get("auto_promote_skills", False):
-            from tools.skill_manager_tool import skill_manage as _skill_manage
+            skill_validation = quality.get("skill_validation") if isinstance(quality.get("skill_validation"), dict) else None
             action = payload.get("action")
+            if skill_validation and not skill_validation.get("valid") and action in {"create", "patch", "edit"}:
+                return "manual_review"
+            from tools.skill_manager_tool import skill_manage as _skill_manage
             target_name = entry.get("target") or payload.get("name") or ""
             if action not in {"create", "patch", "edit", "delete", "write_file", "remove_file"} or not target_name:
                 return "rejected"
@@ -1895,7 +1939,7 @@ class AIAgent:
                 return "superseded" if "already exists" in message else "promoted"
             return "rejected"
 
-        return "candidate"
+        return entry.get("status") or "candidate"
 
     @staticmethod
     def _build_auto_learning_transcript_excerpt(messages_snapshot: List[Dict], max_messages: int = 4, max_chars: int = 800) -> str:
@@ -1992,6 +2036,9 @@ class AIAgent:
         verifier = candidate.get("verifier")
         if isinstance(verifier, dict) and verifier:
             evidence["verifier"] = dict(verifier)
+        quality = candidate.get("quality")
+        if isinstance(quality, dict) and quality:
+            evidence["quality"] = dict(quality)
         return evidence
 
     def _auto_learning_verifier_is_configured(self) -> bool:
@@ -2134,7 +2181,7 @@ class AIAgent:
         *,
         review_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
-        summary = {"staged": 0, "promoted": 0, "rejected": 0, "superseded": 0}
+        summary = {"staged": 0, "promoted": 0, "rejected": 0, "superseded": 0, "manual_review": 0}
         if not self._auto_learning_store:
             return summary
 
@@ -2144,6 +2191,9 @@ class AIAgent:
         candidates = self._run_auto_learning_verifier_pass(candidates, review_context=review_context)
 
         for candidate in candidates:
+            quality = self._assess_auto_learning_candidate_quality(candidate)
+            candidate = dict(candidate)
+            candidate["quality"] = quality
             evidence = self._build_auto_learning_candidate_evidence(candidate, review_context=review_context)
 
             entry = self._auto_learning_store.add_candidate(
@@ -2155,15 +2205,28 @@ class AIAgent:
                 target=candidate.get("target") or None,
                 payload=candidate.get("payload") or {},
             )
+            previous_status = str(entry.get("status") or "candidate")
             summary["staged"] += 1
             verifier_disposition = str(((candidate.get("verifier") or {}).get("disposition") or "")).strip().lower()
-            if verifier_disposition == "reject":
+            if previous_status == "superseded":
+                new_status = "superseded"
+            elif verifier_disposition == "reject":
                 new_status = "rejected"
+            elif quality.get("review_required"):
+                new_status = "manual_review"
             else:
                 new_status = self._promote_auto_learning_candidate(entry)
+
             if new_status != entry.get("status"):
                 entry = self._auto_learning_store.mark_status(entry["id"], new_status)
-            if new_status in {"promoted", "rejected", "superseded"}:
+            quality = dict(quality)
+            quality["shadow_decision"] = new_status if new_status in {"manual_review", "promoted", "rejected", "superseded"} else quality.get("shadow_decision", "candidate")
+            evidence = dict(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {})
+            evidence["quality"] = quality
+            entry = self._auto_learning_store.update_candidate(entry["id"], evidence=evidence)
+            if entry.get("supersedes") and new_status != "superseded":
+                summary["superseded"] += 1
+            if new_status in {"promoted", "rejected", "superseded", "manual_review"}:
                 summary[new_status] += 1
         return summary
 

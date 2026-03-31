@@ -62,6 +62,36 @@ hermes doctor       # Diagnose any issues
 
 📖 **[Full documentation →](https://hermes-agent.nousresearch.com/docs/)**
 
+## Karpathy auto-learning quality engine
+
+Hermes now has an M003-quality local-first learning engine for staged auto-learning candidates before anything durable gets promoted. Instead of treating every reviewer suggestion as equally trustworthy, the loop now stages candidates, checks them for overlap and contradictions, preserves structured evidence, and only then leaves them eligible for promotion.
+
+In practical terms, M003 adds a real trust layer on top of the earlier reviewer/verifier pipeline:
+- semantic dedupe and supersession for overlapping learnings with different wording
+- contradiction detection against durable memory and other staged candidates
+- `manual_review` routing for ambiguous or conflicting learnings instead of silent promotion
+- local evidence inspection via `hermes autolearning search` and `hermes autolearning show <id>`
+- shadow quality analytics in `hermes autolearning status`
+- richer staged candidate metadata so operators can inspect why a learning was kept, superseded, or deferred
+
+This means Hermes can now distinguish between:
+- the same learning said two different ways
+- a new learning that conflicts with an existing durable preference
+- a candidate that should remain reviewable instead of being auto-promoted
+
+Useful commands:
+
+```bash
+hermes autolearning status               # quality/status breakdowns
+hermes autolearning list                 # list staged candidates
+hermes autolearning search concise       # search staged evidence locally
+hermes autolearning show al-abc123       # inspect one candidate in detail
+hermes autolearning promote al-abc123    # manual operator promotion
+hermes autolearning reject al-abc123     # manual operator rejection
+```
+
+This quality engine is designed to improve trust before increasing autonomy: contradictory or low-confidence learnings stay reviewable instead of silently mutating durable memory or skills.
+
 ## CLI vs Messaging Quick Reference
 
 Hermes has two entry points: start the terminal UI with `hermes`, or run the gateway and talk to it from Telegram, Discord, Slack, WhatsApp, Signal, or Email. Once you're in a conversation, many slash commands are shared across both interfaces.
