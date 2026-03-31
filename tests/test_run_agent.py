@@ -3667,6 +3667,45 @@ class TestAutoLearningActorRouting:
 
         assert hook_reason == "delegated_completion"
 
+    def test_should_run_auto_learning_review_ignores_nested_child_tool_errors_in_successful_delegate_result(self):
+        agent = self._make_agent(
+            {
+                "enabled": True,
+                "review_interval": 1,
+                "min_tool_iterations": 4,
+                "candidate_char_limit": 12000,
+                "candidate_max_entries": 10,
+                "promotion_threshold": 0.8,
+                "auto_promote_memory": False,
+                "auto_promote_skills": False,
+                "store_path": "",
+                "debug": False,
+            }
+        )
+
+        agent._iters_since_skill = 0
+
+        hook_reason = agent._should_run_auto_learning_review(
+            [
+                {"role": "user", "content": "Wrap it up."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call-delegate", "function": {"name": "delegate_task", "arguments": "{}"}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-delegate",
+                    "content": '{"results": [{"task_index": 0, "status": "completed", "summary": "Recovered and finished", "tool_trace": [{"tool": "read_file", "status": "error"}, {"tool": "write_file", "status": "ok"}]}], "total_duration_seconds": 1.2}',
+                },
+                {"role": "assistant", "content": "Handled with the delegated result.", "tool_calls": None},
+            ]
+        )
+
+        assert hook_reason == "delegated_completion"
+
     def test_spawn_auto_learning_review_uses_resolved_reviewer_route(self):
         agent = self._make_agent(
             {

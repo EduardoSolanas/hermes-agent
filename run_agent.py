@@ -1673,6 +1673,19 @@ class AIAgent:
                     except (TypeError, ValueError):
                         tool_result = str(tool_result)
                 is_failure, _ = _detect_tool_failure(tool_name, tool_result)
+                if tool_name == "delegate_task" and is_failure:
+                    try:
+                        parsed_delegate = json.loads(tool_result)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        parsed_delegate = None
+                    if isinstance(parsed_delegate, dict):
+                        child_results = parsed_delegate.get("results")
+                        if isinstance(child_results, list) and child_results:
+                            if any(
+                                isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "completed"
+                                for item in child_results
+                            ):
+                                is_failure = False
                 if is_failure:
                     failed_tool_call_count += 1
 
