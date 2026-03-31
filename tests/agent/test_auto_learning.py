@@ -2,13 +2,16 @@ import json
 
 from agent.auto_learning import (
     build_auto_learning_review_prompt,
+    build_auto_learning_verifier_prompt,
     normalize_candidate,
+    normalize_verifier_decision,
     parse_auto_learning_review,
+    parse_auto_learning_verifier_review,
     should_promote_candidate,
 )
 
 
-def test_build_auto_learning_review_prompt_mentions_thresholds_and_json_contract():
+def test_build_auto_learning_review_prompt_mentions_thresholds_and_supported_hooks():
     prompt = build_auto_learning_review_prompt(
         allow_memory=True,
         allow_skills=False,
@@ -21,6 +24,35 @@ def test_build_auto_learning_review_prompt_mentions_thresholds_and_json_contract
     assert '"memory"' in prompt
     assert '"skill"' not in prompt
     assert "4" in prompt
+    assert "0.8" in prompt
+    assert "failure followed by recovery" in prompt
+    assert "explicit user correction" in prompt
+    assert "delegated completion" in prompt
+
+
+
+def test_build_auto_learning_verifier_prompt_mentions_disposition_contract_and_candidates():
+    prompt = build_auto_learning_verifier_prompt(
+        candidates=[
+            {
+                "category": "memory",
+                "summary": "User prefers concise responses",
+                "confidence": 0.91,
+                "reason": "Repeated explicit correction",
+                "target": "user",
+                "payload": {"action": "add", "content": "User prefers concise responses."},
+                "evidence": {"hook_reason": "tool_heavy_success"},
+            }
+        ],
+        promotion_threshold=0.8,
+    )
+
+    assert "strict JSON" in prompt
+    assert '"decisions"' in prompt
+    assert '"approve"' in prompt
+    assert '"reject"' in prompt
+    assert '"downscore"' in prompt
+    assert "User prefers concise responses" in prompt
     assert "0.8" in prompt
 
 
@@ -98,6 +130,71 @@ def test_parse_auto_learning_review_returns_skill_candidate_from_valid_json():
 
 def test_parse_auto_learning_review_returns_empty_list_on_invalid_json():
     assert parse_auto_learning_review("not valid json") == []
+
+
+
+def test_normalize_verifier_decision_clamps_confidence_and_disposition():
+    decision = normalize_verifier_decision(
+        {
+            "index": "2",
+            "disposition": "not-real",
+            "confidence": 1.7,
+            "reason": "  Missing evidence.  ",
+        }
+    )
+
+    assert decision == {
+        "index": 2,
+        "disposition": "reject",
+        "confidence": 1.0,
+        "reason": "Missing evidence.",
+    }
+
+
+
+def test_parse_auto_learning_verifier_review_returns_normalized_decisions_from_valid_json():
+    text = json.dumps(
+        {
+            "decisions": [
+                {
+                    "index": 0,
+                    "disposition": "APPROVE",
+                    "confidence": 0.76,
+                    "reason": "Evidence supports a durable preference.",
+                },
+                {
+                    "index": 1,
+                    "disposition": "downscore",
+                    "confidence": 0.41,
+                    "reason": "Useful signal, but only one observed instance.",
+                },
+            ]
+        }
+    )
+
+    decisions = parse_auto_learning_verifier_review(text)
+
+    assert decisions == [
+        {
+            "index": 0,
+            "disposition": "approve",
+            "confidence": 0.76,
+            "reason": "Evidence supports a durable preference.",
+        },
+        {
+            "index": 1,
+            "disposition": "downscore",
+            "confidence": 0.41,
+            "reason": "Useful signal, but only one observed instance.",
+        },
+    ]
+
+
+
+def test_parse_auto_learning_verifier_review_returns_empty_list_on_invalid_or_missing_decisions():
+    assert parse_auto_learning_verifier_review("not valid json") == []
+    assert parse_auto_learning_verifier_review(json.dumps({"decisions": "nope"})) == []
+    assert parse_auto_learning_verifier_review(json.dumps({"decisions": [{"index": "bad"}]})) == []
 
 
 

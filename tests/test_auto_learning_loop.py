@@ -135,6 +135,197 @@ def test_auto_learning_review_stages_low_confidence_candidate(tmp_path):
 
 
 
+def test_auto_learning_review_stages_structured_audit_evidence(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": False,
+            "auto_promote_skills": False,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+        }
+    )
+
+    review_text = (
+        '{"candidates": ['
+        '{"category": "memory", "summary": "User prefers concise responses", '
+        '"confidence": 0.5, "reason": "single weak signal", "target": "user", '
+        '"payload": {"action": "add", "content": "User prefers concise responses."}}]}'
+    )
+
+    result = agent._process_auto_learning_review_result(
+        review_text,
+        review_context={
+            "hook_reason": "failure_recovery",
+            "hook_signals": ["failure_recovery", "delegated_completion"],
+            "source": {
+                "trigger": "post_response_review",
+                "actor": "reviewer",
+                "model": "anthropic/claude-opus-4.6",
+            },
+            "metrics": {
+                "iteration_count": 3,
+                "tool_call_count": 2,
+                "failed_tool_call_count": 1,
+                "delegated_task_count": 1,
+            },
+            "transcript_refs": [
+                {"message_index": 0, "role": "user"},
+                {"message_index": 1, "role": "assistant"},
+            ],
+            "transcript_excerpt": "User asked for concise responses after a failed tool run that recovered via delegation.",
+        },
+    )
+
+    items = agent._auto_learning_store.list_candidates()
+
+    assert result["staged"] == 1
+    assert len(items) == 1
+    evidence = items[0]["evidence"]
+    assert evidence["candidate_reason"] == "single weak signal"
+    assert evidence["hook_reason"] == "failure_recovery"
+    assert evidence["hook_signals"] == ["failure_recovery", "delegated_completion"]
+    assert evidence["source"]["trigger"] == "post_response_review"
+    assert evidence["metrics"] == {
+        "iteration_count": 3,
+        "tool_call_count": 2,
+        "failed_tool_call_count": 1,
+        "delegated_task_count": 1,
+    }
+    assert evidence["transcript_refs"] == [
+        {"message_index": 0, "role": "user"},
+        {"message_index": 1, "role": "assistant"},
+    ]
+    assert evidence["transcript_excerpt"] == "User asked for concise responses after a failed tool run that recovered via delegation."
+
+
+
+def test_auto_learning_review_records_rejected_status_when_verifier_rejects(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": True,
+            "auto_promote_skills": False,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+            "verifier": {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-latest",
+            },
+        }
+    )
+    agent._memory_store = MagicMock()
+
+    review_text = (
+        '{"candidates": ['
+        '{"category": "memory", "summary": "User prefers concise responses", '
+        '"confidence": 0.95, "reason": "repeated explicit correction", "target": "user", '
+        '"payload": {"action": "add", "content": "User prefers concise responses."}}]}'
+    )
+
+    with (
+        patch.object(agent, "_resolve_auto_learning_actor_settings", return_value={
+            "model": "claude-3-5-haiku-latest",
+            "provider": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "api_key": "verifier-key",
+            "api_mode": "anthropic_messages",
+            "max_iterations": 4,
+            "timeout": None,
+        }),
+        patch("agent.auto_learning.build_auto_learning_verifier_prompt", return_value="verify prompt"),
+        patch("run_agent.AIAgent") as mock_child_cls,
+        patch("tools.memory_tool.memory_tool") as mock_memory_tool,
+    ):
+        mock_child = MagicMock()
+        mock_child.run_conversation.return_value = {
+            "final_response": '{"decisions": [{"index": 0, "disposition": "reject", "confidence": 0.0, "reason": "Single weak signal only."}]}'
+        }
+        mock_child_cls.return_value = mock_child
+
+        result = agent._process_auto_learning_review_result(review_text)
+
+    items = agent._auto_learning_store.list_candidates()
+    assert result["rejected"] == 1
+    assert result["promoted"] == 0
+    assert len(items) == 1
+    assert items[0]["status"] == "rejected"
+    assert items[0]["evidence"]["verifier"]["disposition"] == "reject"
+    mock_memory_tool.assert_not_called()
+
+
+
+def test_auto_learning_review_downscores_candidate_before_promotion(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": True,
+            "auto_promote_skills": False,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+            "verifier": {
+                "provider": "anthropic",
+                "model": "claude-3-5-haiku-latest",
+            },
+        }
+    )
+    agent._memory_store = MagicMock()
+
+    review_text = (
+        '{"candidates": ['
+        '{"category": "memory", "summary": "User prefers concise responses", '
+        '"confidence": 0.95, "reason": "repeated explicit correction", "target": "user", '
+        '"payload": {"action": "add", "content": "User prefers concise responses."}}]}'
+    )
+
+    with (
+        patch.object(agent, "_resolve_auto_learning_actor_settings", return_value={
+            "model": "claude-3-5-haiku-latest",
+            "provider": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "api_key": "verifier-key",
+            "api_mode": "anthropic_messages",
+            "max_iterations": 4,
+            "timeout": None,
+        }),
+        patch("agent.auto_learning.build_auto_learning_verifier_prompt", return_value="verify prompt"),
+        patch("run_agent.AIAgent") as mock_child_cls,
+        patch("tools.memory_tool.memory_tool") as mock_memory_tool,
+    ):
+        mock_child = MagicMock()
+        mock_child.run_conversation.return_value = {
+            "final_response": '{"decisions": [{"index": 0, "disposition": "downscore", "confidence": 0.41, "reason": "Useful, but only one observed instance."}]}'
+        }
+        mock_child_cls.return_value = mock_child
+
+        result = agent._process_auto_learning_review_result(review_text)
+
+    items = agent._auto_learning_store.list_candidates()
+    assert result["staged"] == 1
+    assert result["promoted"] == 0
+    assert len(items) == 1
+    assert items[0]["status"] == "candidate"
+    assert items[0]["confidence"] == 0.41
+    assert items[0]["evidence"]["verifier"]["disposition"] == "downscore"
+    mock_memory_tool.assert_not_called()
+
+
+
 def test_auto_learning_review_promotes_high_confidence_memory_candidate(tmp_path):
     agent = _make_agent(
         {

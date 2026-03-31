@@ -361,6 +361,22 @@ DEFAULT_CONFIG = {
         "auto_promote_skills": False,
         "store_path": "",          # empty = default path under HERMES_HOME
         "debug": False,
+        "reviewer": {
+            "model": "",
+            "provider": "",
+            "base_url": "",
+            "api_key": "",
+            "max_iterations": 0,    # 0 = use reviewer default/fallback
+            "timeout": 0,           # 0 = unset/reserved for future use
+        },
+        "verifier": {
+            "model": "",
+            "provider": "",
+            "base_url": "",
+            "api_key": "",
+            "max_iterations": 0,
+            "timeout": 0,
+        },
     },
 
     # Subagent delegation — override the provider:model used by delegate_task

@@ -71,6 +71,124 @@ def test_auto_learning_command_disable_updates_config(monkeypatch):
 
 
 
+def test_auto_learning_status_surfaces_reviewer_and_verifier_routing(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr(
+        "hermes_cli.auto_learning.load_config",
+        lambda: {
+            "model": "anthropic/claude-opus-4.6",
+            "auto_learning": {
+                "enabled": True,
+                "reviewer": {
+                    "provider": "openrouter",
+                    "model": "google/gemini-3-flash-preview",
+                    "api_key": "sk-secret-reviewer",
+                    "max_iterations": 6,
+                    "timeout": 45,
+                },
+                "verifier": {},
+            },
+        },
+    )
+
+    class Args:
+        auto_learning_action = "status"
+
+    auto_learning_command(Args())
+
+    out = capsys.readouterr().out
+    assert "Karpathy auto-learning: enabled" in out
+    assert "Main model: anthropic/claude-opus-4.6" in out
+    assert "Reviewer: provider=openrouter; model=google/gemini-3-flash-preview; max_iterations=6; timeout=45s" in out
+    assert "Verifier: inherit main agent route" in out
+    assert "sk-secret-reviewer" not in out
+
+
+
+
+
+def test_auto_learning_status_surfaces_hook_and_verifier_breakdowns(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    approved = store.add_candidate(
+        category="memory",
+        summary="User prefers concise responses",
+        confidence=0.84,
+        evidence={
+            "hook_reason": "explicit_user_correction",
+            "verifier": {"disposition": "approve", "confidence": 0.84, "reason": "strong evidence"},
+        },
+    )
+    store.mark_status(approved["id"], "promoted")
+    rejected = store.add_candidate(
+        category="skill",
+        summary="Patch retry workflow",
+        confidence=0.31,
+        evidence={
+            "hook_reason": "failure_recovery",
+            "verifier": {"disposition": "reject", "confidence": 0.0, "reason": "too weak"},
+        },
+    )
+    store.mark_status(rejected["id"], "rejected")
+
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr(
+        "hermes_cli.auto_learning.load_config",
+        lambda: {
+            "model": "anthropic/claude-opus-4.6",
+            "auto_learning": {"enabled": True, "reviewer": {}, "verifier": {}},
+        },
+    )
+
+    class Args:
+        auto_learning_action = "status"
+
+    auto_learning_command(Args())
+
+    out = capsys.readouterr().out
+    assert "Hook reasons:" in out
+    assert "explicit_user_correction: 1" in out
+    assert "failure_recovery: 1" in out
+    assert "Verifier outcomes:" in out
+    assert "approve: 1" in out
+    assert "reject: 1" in out
+
+
+
+def test_auto_learning_list_surfaces_hook_and_verifier_details(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    entry = store.add_candidate(
+        category="memory",
+        summary="User prefers concise responses",
+        confidence=0.41,
+        evidence={
+            "hook_reason": "failure_recovery",
+            "verifier": {"disposition": "downscore", "confidence": 0.41, "reason": "single recovered case"},
+        },
+    )
+
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr("hermes_cli.auto_learning.load_config", lambda: {"auto_learning": {"enabled": True}})
+
+    class Args:
+        auto_learning_action = "list"
+        status = None
+
+    auto_learning_command(Args())
+
+    out = capsys.readouterr().out
+    assert f"{entry['id']}  [candidate]  memory  User prefers concise responses" in out
+    assert "hook=failure_recovery" in out
+    assert "verifier=downscore@0.41" in out
+
+
+
 def test_auto_learning_command_promote_and_reject_update_store(tmp_path, monkeypatch):
     from hermes_cli.auto_learning import auto_learning_command
 
@@ -105,3 +223,5 @@ def test_auto_learning_command_promote_and_reject_update_store(tmp_path, monkeyp
 
     auto_learning_command(RejectArgs())
     assert store.list_candidates(status="rejected")[0]["id"] == second["id"]
+
+
