@@ -123,6 +123,19 @@ def _format_candidate_inspection(item: dict) -> str | None:
     if semantic_key:
         details.append(f"semantic_key={semantic_key}")
 
+    skill_validation = quality.get("skill_validation") if isinstance(quality.get("skill_validation"), dict) else {}
+    if skill_validation:
+        action = str(skill_validation.get("action") or "unknown").strip() or "unknown"
+        name = str(skill_validation.get("name") or "").strip()
+        validity = "valid" if skill_validation.get("valid") else "invalid"
+        label = f"skill_validation={action}:{validity}"
+        if name:
+            label += f"@{name}"
+        details.append(label)
+        error = str(skill_validation.get("error") or "").strip()
+        if error:
+            details.append(error)
+
     if not details:
         return None
     return "  " + "  ".join(details)

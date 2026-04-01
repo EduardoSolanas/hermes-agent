@@ -207,6 +207,44 @@ def test_auto_learning_list_surfaces_hook_and_verifier_details(tmp_path, monkeyp
 
 
 
+def test_auto_learning_list_surfaces_skill_replay_validation_details(tmp_path, monkeypatch, capsys):
+    from hermes_cli.auto_learning import auto_learning_command
+
+    store = AutoLearningStore(path=tmp_path / "candidates.jsonl", max_entries=10)
+    entry = store.add_candidate(
+        category="skill",
+        summary="Patch outdated OpenVINO steps",
+        confidence=0.96,
+        target="openvino-qwen-no-think",
+        evidence={
+            "quality": {
+                "skill_validation": {
+                    "valid": False,
+                    "action": "patch",
+                    "name": "openvino-qwen-no-think",
+                    "error": "old_string not found in the file.",
+                }
+            }
+        },
+    )
+    store.mark_status(entry["id"], "manual_review")
+
+    monkeypatch.setattr("hermes_cli.auto_learning._load_store", lambda: store)
+    monkeypatch.setattr("hermes_cli.auto_learning.load_config", lambda: {"auto_learning": {"enabled": True}})
+
+    class Args:
+        auto_learning_action = "list"
+        status = None
+
+    auto_learning_command(Args())
+
+    out = capsys.readouterr().out
+    assert f"{entry['id']}  [manual_review]  skill  Patch outdated OpenVINO steps" in out
+    assert "skill_validation=patch:invalid@openvino-qwen-no-think" in out
+    assert "old_string not found in the file." in out
+
+
+
 def test_auto_learning_command_promote_and_reject_update_store(tmp_path, monkeypatch):
     from hermes_cli.auto_learning import auto_learning_command
 

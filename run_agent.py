@@ -2073,22 +2073,16 @@ class AIAgent:
         hook_reason: str,
         reviewer_settings: Dict[str, Any],
         source_actor: str = "reviewer",
+        include_transcript_details: bool = True,
     ) -> Dict[str, Any]:
         recent_messages = self._slice_auto_learning_turn(messages_snapshot)
-        transcript_refs = []
-        for index, message in enumerate(recent_messages):
-            if not isinstance(message, dict):
-                continue
-            role = str(message.get("role") or "").strip() or "unknown"
-            if role in {"user", "assistant", "tool"}:
-                transcript_refs.append({"message_index": index, "role": role})
 
         hook_signals = self._collect_auto_learning_hook_signals(recent_messages)
         if hook_reason:
             hook_signals = [hook_reason] + [signal for signal in hook_signals if signal != hook_reason]
         hook_metrics = self._collect_auto_learning_hook_metrics(recent_messages)
 
-        return {
+        review_context = {
             "hook_reason": str(hook_reason or "").strip() or "tool_heavy_success",
             "hook_signals": hook_signals or [str(hook_reason or "tool_heavy_success")],
             "source": {
@@ -2103,9 +2097,20 @@ class AIAgent:
                 "failed_tool_call_count": hook_metrics["failed_tool_call_count"],
                 "delegated_task_count": hook_metrics["delegated_task_count"],
             },
-            "transcript_refs": transcript_refs[-6:],
-            "transcript_excerpt": self._build_auto_learning_transcript_excerpt(recent_messages),
         }
+
+        if include_transcript_details:
+            transcript_refs = []
+            for index, message in enumerate(recent_messages):
+                if not isinstance(message, dict):
+                    continue
+                role = str(message.get("role") or "").strip() or "unknown"
+                if role in {"user", "assistant", "tool"}:
+                    transcript_refs.append({"message_index": index, "role": role})
+            review_context["transcript_refs"] = transcript_refs[-6:]
+            review_context["transcript_excerpt"] = self._build_auto_learning_transcript_excerpt(recent_messages)
+
+        return review_context
 
     def _build_auto_learning_candidate_evidence(
         self,
@@ -2225,10 +2230,15 @@ class AIAgent:
             verifier_prompt_candidates = []
             for candidate in candidates:
                 candidate_payload = dict(candidate)
-                candidate_payload["evidence"] = self._build_auto_learning_candidate_evidence(
-                    candidate,
-                    review_context=review_context,
-                )
+                if isinstance(review_context, dict) and review_context:
+                    evidence = self._build_auto_learning_candidate_evidence(
+                        candidate,
+                        review_context=review_context,
+                    )
+                    evidence_without_reason = dict(evidence)
+                    evidence_without_reason.pop("candidate_reason", None)
+                    if evidence_without_reason:
+                        candidate_payload["evidence"] = evidence_without_reason
                 verifier_prompt_candidates.append(candidate_payload)
 
             prompt = build_auto_learning_verifier_prompt(
@@ -2308,12 +2318,17 @@ class AIAgent:
         from agent.auto_learning import parse_auto_learning_review
 
         candidates = parse_auto_learning_review(review_text)
+        if not candidates:
+            return summary
         candidates = self._run_auto_learning_verifier_pass(candidates, review_context=review_context)
 
         for candidate in candidates:
-            quality = self._assess_auto_learning_candidate_quality(candidate)
             candidate = dict(candidate)
-            candidate["quality"] = quality
+            verifier_disposition = str(((candidate.get("verifier") or {}).get("disposition") or "")).strip().lower()
+            quality = None
+            if verifier_disposition != "reject":
+                quality = self._assess_auto_learning_candidate_quality(candidate)
+                candidate["quality"] = quality
             evidence = self._build_auto_learning_candidate_evidence(candidate, review_context=review_context)
 
             entry = self._auto_learning_store.add_candidate(
@@ -2327,33 +2342,40 @@ class AIAgent:
             )
             previous_status = str(entry.get("status") or "candidate")
             summary["staged"] += 1
-            verifier_disposition = str(((candidate.get("verifier") or {}).get("disposition") or "")).strip().lower()
             if previous_status == "superseded":
                 new_status = "superseded"
             elif verifier_disposition == "reject":
                 new_status = "rejected"
-            elif quality.get("review_required"):
-                new_status = quality.get("shadow_decision") or "manual_review"
+            elif (quality or {}).get("review_required"):
+                new_status = (quality or {}).get("shadow_decision") or "manual_review"
             else:
                 new_status = self._promote_auto_learning_candidate(entry)
 
             if new_status != entry.get("status"):
                 entry = self._auto_learning_store.mark_status(entry["id"], new_status)
-            quality = dict(quality)
+            quality = dict(quality or {})
             quality["shadow_decision"] = new_status if new_status in {"manual_review", "promoted", "rejected", "superseded"} else quality.get("shadow_decision", "candidate")
             evidence = dict(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {})
+            quality_payload = dict(quality)
+            if set(quality_payload.keys()) == {"shadow_decision"}:
+                quality_payload = {}
+            if quality_payload:
+                evidence["quality"] = quality_payload
             if new_status == "promoted" and self._auto_learning_actor_is_configured("promoter"):
-                try:
-                    promoter_settings = self._resolve_auto_learning_actor_settings("promoter")
-                except Exception:
-                    promoter_settings = {}
-                evidence["promoter"] = {
-                    "disposition": "promote",
-                    "model": promoter_settings.get("model") or self.model,
-                    "provider": promoter_settings.get("provider") or self.provider,
-                }
-            evidence["quality"] = quality
-            entry = self._auto_learning_store.update_candidate(entry["id"], evidence=evidence)
+                existing_promoter = evidence.get("promoter") if isinstance(evidence.get("promoter"), dict) else {}
+                if str(existing_promoter.get("disposition") or "").strip().lower() != "promote":
+                    try:
+                        promoter_settings = self._resolve_auto_learning_actor_settings("promoter")
+                    except Exception:
+                        promoter_settings = {}
+                    evidence["promoter"] = {
+                        "disposition": "promote",
+                        "model": promoter_settings.get("model") or self.model,
+                        "provider": promoter_settings.get("provider") or self.provider,
+                    }
+            current_evidence = entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {}
+            if evidence != current_evidence:
+                entry = self._auto_learning_store.update_candidate(entry["id"], evidence=evidence)
             if entry.get("supersedes") and new_status != "superseded":
                 summary["superseded"] += 1
             if new_status in {"promoted", "rejected", "superseded", "manual_review"}:
@@ -2363,11 +2385,17 @@ class AIAgent:
     def _spawn_auto_learning_review(self, messages_snapshot: List[Dict], *, hook_reason: str = "tool_heavy_success") -> None:
         if not self._auto_learning_store:
             return
+
+        allow_memory = "memory" in self.valid_tool_names
+        allow_skills = "skill_manage" in self.valid_tool_names
+        if not allow_memory and not allow_skills:
+            return
+
         from agent.auto_learning import build_auto_learning_review_prompt
 
         prompt = build_auto_learning_review_prompt(
-            allow_memory="memory" in self.valid_tool_names,
-            allow_skills="skill_manage" in self.valid_tool_names,
+            allow_memory=allow_memory,
+            allow_skills=allow_skills,
             min_tool_iterations=int(self._auto_learning_config.get("min_tool_iterations", 4) or 4),
             promotion_threshold=float(self._auto_learning_config.get("promotion_threshold", 0.80) or 0.80),
         )
@@ -2384,6 +2412,10 @@ class AIAgent:
             hook_reason=hook_reason,
             reviewer_settings=reviewer_settings,
             source_actor=review_actor,
+            include_transcript_details=bool(
+                self._auto_learning_config.get("auto_promote_memory", True)
+                or self._auto_learning_config.get("auto_promote_skills", False)
+            ),
         )
 
         def _run_review():

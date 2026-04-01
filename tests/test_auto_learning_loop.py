@@ -514,6 +514,93 @@ def test_auto_learning_review_rejects_malformed_skill_payload(tmp_path):
 
 
 
+def test_auto_learning_review_auto_promotes_skill_create_after_valid_replay_validation(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": True,
+            "auto_promote_skills": True,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+        }
+    )
+
+    with (
+        patch(
+            "tools.skill_manager_tool.replay_validate_skill_candidate",
+            return_value={"valid": True, "action": "create", "name": "my-skill"},
+        ) as mock_validate,
+        patch(
+            "tools.skill_manager_tool.skill_manage",
+            return_value='{"success": true, "message": "Skill created."}',
+        ) as mock_skill_manage,
+    ):
+        review_text = (
+            '{"candidates": ['
+            '{"category": "skill", "summary": "Create a reusable troubleshooting skill", '
+            '"confidence": 0.99, "reason": "reusable workflow fix", "target": "my-skill", '
+            '"payload": {"action": "create", "content": "---\\nname: my-skill\\ndescription: test\\n---\\n\\n# My Skill\\n\\nDo the thing."}}]}'
+        )
+
+        result = agent._process_auto_learning_review_result(review_text)
+
+    items = agent._auto_learning_store.list_candidates(status="promoted")
+    assert result["promoted"] == 1
+    assert len(items) == 1
+    assert items[0]["evidence"]["quality"]["skill_validation"]["action"] == "create"
+    mock_validate.assert_called_once()
+    mock_skill_manage.assert_called_once()
+
+
+
+def test_auto_learning_review_blocks_skill_edit_promotion_on_invalid_replay_validation(tmp_path):
+    agent = _make_agent(
+        {
+            "enabled": True,
+            "review_interval": 1,
+            "min_tool_iterations": 1,
+            "candidate_char_limit": 12000,
+            "candidate_max_entries": 10,
+            "promotion_threshold": 0.8,
+            "auto_promote_memory": True,
+            "auto_promote_skills": True,
+            "store_path": str(tmp_path / "candidates.jsonl"),
+            "debug": False,
+        }
+    )
+
+    with (
+        patch(
+            "tools.skill_manager_tool.replay_validate_skill_candidate",
+            return_value={"valid": False, "action": "edit", "name": "openvino-qwen-no-think", "error": "SKILL.md frontmatter is not closed."},
+        ) as mock_validate,
+        patch("tools.skill_manager_tool.skill_manage") as mock_skill_manage,
+    ):
+        review_text = (
+            '{"candidates": ['
+            '{"category": "skill", "summary": "Rewrite outdated skill cleanly", '
+            '"confidence": 0.99, "reason": "reusable workflow fix", "target": "openvino-qwen-no-think", '
+            '"payload": {"action": "edit", "content": "---\\nname: openvino-qwen-no-think\\ndescription: broken"}}]}'
+        )
+
+        result = agent._process_auto_learning_review_result(review_text)
+
+    items = agent._auto_learning_store.list_candidates(status="manual_review")
+    assert result["manual_review"] == 1
+    assert len(items) == 1
+    assert items[0]["evidence"]["quality"]["skill_validation"]["action"] == "edit"
+    assert items[0]["evidence"]["quality"]["skill_validation"]["valid"] is False
+    assert "frontmatter" in items[0]["evidence"]["quality"]["skill_validation"]["error"]
+    mock_validate.assert_called_once()
+    mock_skill_manage.assert_not_called()
+
+
+
 def test_auto_learning_review_dedupes_duplicate_candidate(tmp_path):
     agent = _make_agent(
         {
