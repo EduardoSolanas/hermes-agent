@@ -463,7 +463,7 @@ class TestModelsEndpoint:
         runtime_kwargs = {
             "provider": "copilot",
             "base_url": "https://api.githubcopilot.com",
-            "api_key": "sk-test",
+            "api_key": "***",
             "api_mode": "codex_responses",
         }
 
@@ -487,6 +487,45 @@ class TestModelsEndpoint:
             "agent_model": "gpt-5.4",
             "agent_runtime_kwargs": runtime_kwargs,
         }
+
+    def test_create_agent_ignores_non_aiagent_runtime_kwargs(self, adapter):
+        runtime_kwargs = {
+            "provider": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "***",
+            "api_mode": "chat_completions",
+            "source": "api_server",
+            "session_source": {"platform": "api_server"},
+            "requested_model": "openrouter/google/gemma-4-26b-a4b-it",
+        }
+
+        with patch("run_agent.AIAgent") as mock_aiagent, patch(
+            "gateway.run._load_gateway_config",
+            return_value={},
+        ), patch(
+            "hermes_cli.tools_config._get_platform_tools",
+            return_value=set(),
+        ), patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "runtime_kwargs": {"provider": "copilot", "api_key": "***"},
+                "default_model": "gpt-5.4",
+            },
+        ):
+            adapter._create_agent(
+                model="google/gemma-4-26b-a4b-it",
+                runtime_kwargs_override=runtime_kwargs,
+            )
+
+        kwargs = mock_aiagent.call_args.kwargs
+        assert kwargs["model"] == "google/gemma-4-26b-a4b-it"
+        assert kwargs["provider"] == "openrouter"
+        assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
+        assert kwargs["api_mode"] == "chat_completions"
+        assert "source" not in kwargs
+        assert "session_source" not in kwargs
+        assert "requested_model" not in kwargs
 
     @pytest.mark.asyncio
     async def test_models_returns_profile_name(self):
