@@ -527,6 +527,54 @@ class TestModelsEndpoint:
         assert "session_source" not in kwargs
         assert "requested_model" not in kwargs
 
+    def test_resolve_request_model_defaults_none_to_hermes_agent(self, adapter):
+        runtime_kwargs = {
+            "provider": "copilot",
+            "base_url": "https://api.githubcopilot.com",
+            "api_key": "***",
+            "api_mode": "codex_responses",
+        }
+
+        with patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "runtime_kwargs": runtime_kwargs,
+                "default_model": "gpt-5.4",
+            },
+        ):
+            resolved = adapter._resolve_request_model(None)
+
+        assert resolved == {
+            "requested_model": "hermes-agent",
+            "agent_model": "gpt-5.4",
+            "agent_runtime_kwargs": runtime_kwargs,
+        }
+
+    def test_resolve_request_model_defaults_blank_to_hermes_agent(self, adapter):
+        runtime_kwargs = {
+            "provider": "copilot",
+            "base_url": "https://api.githubcopilot.com",
+            "api_key": "***",
+            "api_mode": "codex_responses",
+        }
+
+        with patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "runtime_kwargs": runtime_kwargs,
+                "default_model": "gpt-5.4",
+            },
+        ):
+            resolved = adapter._resolve_request_model("   ")
+
+        assert resolved == {
+            "requested_model": "hermes-agent",
+            "agent_model": "gpt-5.4",
+            "agent_runtime_kwargs": runtime_kwargs,
+        }
+
     @pytest.mark.asyncio
     async def test_models_returns_profile_name(self):
         """When running under a named profile, /v1/models advertises the profile name."""
@@ -916,6 +964,47 @@ class TestChatCompletionsEndpoint:
             assert mock_run.call_args.kwargs["agent_runtime_kwargs"] == runtime_kwargs
 
     @pytest.mark.asyncio
+    async def test_chat_completion_without_model_defaults_to_hermes_agent(self, adapter):
+        mock_result = {
+            "final_response": "Hello from default model",
+            "messages": [],
+            "api_calls": 1,
+        }
+        runtime_kwargs = {
+            "provider": "copilot",
+            "base_url": "https://api.githubcopilot.com",
+            "api_key": "***",
+            "api_mode": "codex_responses",
+        }
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(
+                adapter,
+                "_resolve_request_model",
+                return_value={
+                    "requested_model": "hermes-agent",
+                    "agent_model": "gpt-5.4",
+                    "agent_runtime_kwargs": runtime_kwargs,
+                },
+                create=True,
+            ) as mock_resolve, patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    json={
+                        "messages": [{"role": "user", "content": "Hello"}],
+                    },
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["model"] == "hermes-agent"
+            assert mock_resolve.call_args.args[0] == "hermes-agent"
+            assert mock_run.call_args.kwargs["agent_model"] == "gpt-5.4"
+            assert mock_run.call_args.kwargs["agent_runtime_kwargs"] == runtime_kwargs
+
+    @pytest.mark.asyncio
     async def test_chat_completion_rejects_unknown_model_with_openai_error(self, adapter):
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
@@ -1205,6 +1294,47 @@ class TestResponsesEndpoint:
             data = await resp.json()
             assert data["model"] == "copilot/gpt-5.4"
             assert mock_resolve.call_args.args[0] == "copilot/gpt-5.4"
+            assert mock_run.call_args.kwargs["agent_model"] == "gpt-5.4"
+            assert mock_run.call_args.kwargs["agent_runtime_kwargs"] == runtime_kwargs
+
+    @pytest.mark.asyncio
+    async def test_responses_without_model_defaults_to_hermes_agent(self, adapter):
+        mock_result = {
+            "final_response": "Default responses model",
+            "messages": [],
+            "api_calls": 1,
+        }
+        runtime_kwargs = {
+            "provider": "copilot",
+            "base_url": "https://api.githubcopilot.com",
+            "api_key": "***",
+            "api_mode": "codex_responses",
+        }
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(
+                adapter,
+                "_resolve_request_model",
+                return_value={
+                    "requested_model": "hermes-agent",
+                    "agent_model": "gpt-5.4",
+                    "agent_runtime_kwargs": runtime_kwargs,
+                },
+                create=True,
+            ) as mock_resolve, patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={
+                        "input": "Hello",
+                    },
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["model"] == "hermes-agent"
+            assert mock_resolve.call_args.args[0] == "hermes-agent"
             assert mock_run.call_args.kwargs["agent_model"] == "gpt-5.4"
             assert mock_run.call_args.kwargs["agent_runtime_kwargs"] == runtime_kwargs
 
