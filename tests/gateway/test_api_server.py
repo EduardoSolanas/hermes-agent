@@ -459,6 +459,127 @@ class TestModelsEndpoint:
             assert "copilot/gpt-5.4" in model_ids
             assert "anthropic/claude-sonnet-4-5-20250929" in model_ids
 
+    def test_get_served_model_records_excludes_non_configured_providers(self, adapter):
+        with patch.object(
+            adapter,
+            "_configured_provider_ids",
+            return_value=["copilot"],
+        ), patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "provider": "copilot",
+                "default_model": "gpt-5.4",
+                "runtime_kwargs": {"provider": "copilot", "api_key": "copilot-key", "base_url": "https://api.githubcopilot.com"},
+            },
+        ), patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            side_effect=lambda requested: {
+                "provider": requested,
+                "api_key": f"{requested}-key",
+                "base_url": f"https://{requested}.example.com/v1",
+            },
+        ), patch(
+            "hermes_cli.models.fetch_api_models",
+            side_effect=lambda api_key, base_url: ["gpt-5.4"] if api_key == "copilot-key" else ["should-not-appear"],
+        ), patch(
+            "hermes_cli.models.provider_model_ids",
+            side_effect=lambda provider: ["fallback-model"],
+        ):
+            records = adapter._get_served_model_records()
+
+        public_model_ids = [record["public_model_id"] for record in records]
+        assert "copilot/gpt-5.4" in public_model_ids
+        assert all(not model_id.startswith("anthropic/") for model_id in public_model_ids)
+        assert all(not model_id.startswith("openrouter/") for model_id in public_model_ids)
+
+    def test_get_served_model_records_skips_provider_when_live_model_fetch_returns_4xx_or_5xx(self, adapter):
+        with patch.object(
+            adapter,
+            "_configured_provider_ids",
+            return_value=["copilot", "anthropic"],
+        ), patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "provider": "copilot",
+                "default_model": "gpt-5.4",
+                "runtime_kwargs": {"provider": "copilot", "api_key": "copilot-key", "base_url": "https://api.githubcopilot.com"},
+            },
+        ), patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            side_effect=lambda requested: {
+                "provider": requested,
+                "api_key": f"{requested}-key",
+                "base_url": f"https://{requested}.example.com/v1",
+            },
+        ), patch(
+            "hermes_cli.models.fetch_api_models",
+            side_effect=lambda api_key, base_url: ["gpt-5.4"] if api_key == "copilot-key" else None,
+        ), patch(
+            "hermes_cli.models.provider_model_ids",
+            side_effect=lambda provider: ["claude-sonnet-4-5-20250929"] if provider == "anthropic" else [],
+        ):
+            records = adapter._get_served_model_records()
+
+        public_model_ids = [record["public_model_id"] for record in records]
+        assert "copilot/gpt-5.4" in public_model_ids
+        assert "anthropic/claude-sonnet-4-5-20250929" not in public_model_ids
+
+    def test_get_served_model_records_continues_when_one_provider_resolution_raises(self, adapter):
+        with patch.object(
+            adapter,
+            "_configured_provider_ids",
+            return_value=["copilot", "anthropic", "openrouter"],
+        ), patch.object(
+            adapter,
+            "_runtime_model_context",
+            return_value={
+                "provider": "copilot",
+                "default_model": "gpt-5.4",
+                "runtime_kwargs": {"provider": "copilot", "api_key": "copilot-key", "base_url": "https://api.githubcopilot.com"},
+            },
+        ), patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            side_effect=lambda requested: (
+                {"provider": requested, "api_key": f"{requested}-key", "base_url": f"https://{requested}.example.com/v1"}
+                if requested != "anthropic"
+                else (_ for _ in ()).throw(RuntimeError("expired auth"))
+            ),
+        ), patch(
+            "hermes_cli.models.fetch_api_models",
+            side_effect=lambda api_key, base_url: {
+                "copilot-key": ["gpt-5.4"],
+                "openrouter-key": ["google/gemma-4-26b-a4b-it"],
+            }.get(api_key, None),
+        ), patch(
+            "hermes_cli.models.provider_model_ids",
+            return_value=[],
+        ):
+            records = adapter._get_served_model_records()
+
+        public_model_ids = [record["public_model_id"] for record in records]
+        assert "copilot/gpt-5.4" in public_model_ids
+        assert "openrouter/google/gemma-4-26b-a4b-it" in public_model_ids
+        assert all(not model_id.startswith("anthropic/") for model_id in public_model_ids)
+
+    def test_resolve_request_model_rejects_inactive_provider_model_from_unserved_catalog(self, adapter):
+        with patch.object(
+            adapter,
+            "_get_served_model_records",
+            return_value=[
+                {
+                    "public_model_id": "copilot/gpt-5.4",
+                    "provider": "copilot",
+                    "agent_model": "gpt-5.4",
+                    "runtime_kwargs": {"provider": "copilot"},
+                }
+            ],
+            create=True,
+        ):
+            with pytest.raises(ValueError, match="Unknown or inactive model 'anthropic/claude-sonnet-4-5-20250929'"):
+                adapter._resolve_request_model("anthropic/claude-sonnet-4-5-20250929")
+
     def test_resolve_request_model_returns_runtime_for_provider_qualified_model(self, adapter):
         runtime_kwargs = {
             "provider": "copilot",

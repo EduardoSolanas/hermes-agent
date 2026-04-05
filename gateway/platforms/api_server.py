@@ -709,6 +709,18 @@ class APIServerAdapter(BasePlatformAdapter):
         }
 
     @staticmethod
+    def _dedupe_model_ids(model_ids: List[str]) -> List[str]:
+        seen: set[str] = set()
+        ordered: List[str] = []
+        for model_id in model_ids:
+            normalized = str(model_id or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+        return ordered
+
+    @staticmethod
     def _dedupe_model_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen: set[str] = set()
         ordered: List[Dict[str, Any]] = []
@@ -777,28 +789,43 @@ class APIServerAdapter(BasePlatformAdapter):
             from hermes_cli.runtime_provider import resolve_runtime_provider
 
             for provider_id in self._configured_provider_ids():
-                runtime_kwargs = resolve_runtime_provider(requested=provider_id)
-                resolved_provider = str(runtime_kwargs.get("provider") or provider_id or "").strip()
+                try:
+                    runtime_kwargs = resolve_runtime_provider(requested=provider_id)
+                    resolved_provider = str(runtime_kwargs.get("provider") or provider_id or "").strip()
 
-                model_ids = fetch_api_models(
-                    runtime_kwargs.get("api_key"),
-                    runtime_kwargs.get("base_url"),
-                ) or []
-                if not model_ids:
-                    model_ids = provider_model_ids(resolved_provider)
-
-                if resolved_provider == active_provider and active_default_model:
-                    model_ids.append(active_default_model)
-
-                for agent_model in self._dedupe_model_ids(model_ids):
-                    records.append(
-                        {
-                            "public_model_id": f"{resolved_provider}/{agent_model}",
-                            "provider": resolved_provider,
-                            "agent_model": agent_model,
-                            "runtime_kwargs": dict(runtime_kwargs),
-                        }
+                    model_ids = fetch_api_models(
+                        runtime_kwargs.get("api_key"),
+                        runtime_kwargs.get("base_url"),
                     )
+                    if model_ids is None:
+                        logger.debug(
+                            "Skipping provider %s in /v1/models because live model discovery failed",
+                            resolved_provider or provider_id,
+                        )
+                        continue
+
+                    if not model_ids:
+                        model_ids = provider_model_ids(resolved_provider)
+
+                    if resolved_provider == active_provider and active_default_model:
+                        model_ids.append(active_default_model)
+
+                    for agent_model in self._dedupe_model_ids(model_ids):
+                        records.append(
+                            {
+                                "public_model_id": f"{resolved_provider}/{agent_model}",
+                                "provider": resolved_provider,
+                                "agent_model": agent_model,
+                                "runtime_kwargs": dict(runtime_kwargs),
+                            }
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        "Skipping provider %s in /v1/models due to discovery error: %s",
+                        provider_id,
+                        exc,
+                    )
+                    continue
         except Exception as exc:
             logger.debug("Could not discover served model records for /v1/models: %s", exc)
 
