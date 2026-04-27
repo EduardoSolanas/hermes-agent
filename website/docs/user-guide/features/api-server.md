@@ -192,7 +192,7 @@ Delete a stored response.
 
 ### GET /v1/models
 
-Returns an OpenAI-style model list containing the backward-compatible alias model (`hermes-agent`, or the active [profile](/docs/user-guide/profiles) name) plus any additional bounded, intentionally configured requestable models. These can include provider-qualified IDs such as `copilot/gpt-5.4` or `anthropic/claude-sonnet-4-5-20250929` when Hermes is explicitly configured to route them. Most frontends call this endpoint for model discovery.
+Returns an OpenAI-style model list containing the backward-compatible alias model (`hermes-agent`, or the active [profile](/docs/user-guide/profiles) name) plus any additional bounded, intentionally configured requestable models. These can include provider-qualified IDs such as `copilot/gpt-5.4` or `anthropic/claude-sonnet-4-5-20250929` when Hermes is explicitly configured to route them, so request-time routing stays deterministic across providers. Most frontends call this endpoint for model discovery.
 
 ### GET /health
 
