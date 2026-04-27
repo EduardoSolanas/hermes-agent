@@ -101,6 +101,13 @@ class TestBusyInputMode:
         cli = _make_cli()
         assert cli.busy_input_mode == "interrupt"
 
+    def test_module_default_busy_input_mode_is_steer(self):
+        import hermes_cli.config as hermes_config
+        import cli as cli_mod
+
+        assert hermes_config.DEFAULT_CONFIG["display"]["busy_input_mode"] == "steer"
+        assert cli_mod.CLI_CONFIG["display"]["busy_input_mode"] == "steer"
+
     def test_busy_input_mode_queue_is_honored(self):
         cli = _make_cli(config_overrides={"display": {"busy_input_mode": "queue"}})
         assert cli.busy_input_mode == "queue"
