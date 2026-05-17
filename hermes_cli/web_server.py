@@ -1134,8 +1134,14 @@ async def set_model_assignment(body: ModelAssignment):
 
 # ── Dashboard model configuration endpoints ───────────────────────────
 
+class _FallbackEntry(BaseModel):
+    provider: str
+    model: str
+    base_url: str | None = None
+
+
 class _FallbackBody(BaseModel):
-    fallbacks: list[dict[str, str]]
+    fallbacks: list[_FallbackEntry]
 
 
 class _RegisterBody(BaseModel):
@@ -1221,16 +1227,16 @@ def set_fallback_chain(body: _FallbackBody):
         cfg = load_config()
         chain = []
         for entry in body.fallbacks:
-            provider = str(entry.get("provider", "")).strip()
-            model = str(entry.get("model", "")).strip()
+            provider = entry.provider.strip()
+            model = entry.model.strip()
             if not provider or not model:
                 raise HTTPException(
                     status_code=400,
                     detail="Each fallback entry must have non-empty provider and model",
                 )
             chain.append({"provider": provider, "model": model})
-            if entry.get("base_url"):
-                chain[-1]["base_url"] = entry["base_url"]
+            if entry.base_url:
+                chain[-1]["base_url"] = entry.base_url
 
         cfg["fallback_providers"] = chain
         cfg.pop("fallback_model", None)

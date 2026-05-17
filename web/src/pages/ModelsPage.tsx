@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Brain,
@@ -389,6 +389,7 @@ export default function ModelsPage() {
   // Settings panel state
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [fallbacks, setFallbacks] = useState<{ provider: string; model: string; base_url?: string }[]>([]);
+  const fallbacksRef = useRef<{ provider: string; model: string; base_url?: string }[]>([]);
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [fallbackBusy, setFallbackBusy] = useState(false);
   const [fallbackError, setFallbackError] = useState<string | null>(null);
@@ -396,7 +397,7 @@ export default function ModelsPage() {
 
   useEffect(() => {
     setFallbackLoading(true);
-    api.getConfiguredModels().then((cfg) => { setFallbacks(cfg.fallbacks); }).catch(() => {}).finally(() => setFallbackLoading(false));
+    api.getConfiguredModels().then((cfg) => { fallbacksRef.current = cfg.fallbacks; setFallbacks(cfg.fallbacks); }).catch(() => {}).finally(() => setFallbackLoading(false));
   }, []);
 
   useEffect(() => {
@@ -414,20 +415,36 @@ export default function ModelsPage() {
     setSaveKey((k) => k + 1);
   };
 
-  const moveFallback = (from: number, to: number) => {
-    setFallbacks((prev) => { const next = [...prev]; const [item] = next.splice(from, 1); next.splice(to, 0, item); return next; });
+  const moveFallback = async (from: number, to: number) => {
+    const next = [...fallbacksRef.current];
+    const [item] = next.splice(from, 1);
+    if (!item) return;
+    next.splice(to, 0, item);
+    fallbacksRef.current = next;
+    setFallbacks(next);
+    // Auto-save on reorder so changes persist immediately
+    setFallbackBusy(true); setFallbackError(null);
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); }
+    catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
+    finally { setFallbackBusy(false); }
   };
 
   const addFallback = async ({ provider, model }: { provider: string; model: string }) => {
-    setFallbacks((prev) => [...prev, { provider, model }]);
+    const next = [...fallbacksRef.current, { provider, model }];
+    fallbacksRef.current = next;
+    setFallbacks(next);
     setPickerFallback(null);
   };
 
-  const removeFallback = (idx: number) => { setFallbacks((prev) => prev.filter((_, i) => i !== idx)); };
+  const removeFallback = (idx: number) => {
+    const next = fallbacksRef.current.filter((_, i) => i !== idx);
+    fallbacksRef.current = next;
+    setFallbacks(next);
+  };
 
   const saveFallbacks = async () => {
     setFallbackBusy(true); setFallbackError(null);
-    try { await api.setFallbackChain(fallbacks); setSaveKey((k) => k + 1); }
+    try { await api.setFallbackChain(fallbacksRef.current); setSaveKey((k) => k + 1); }
     catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
     finally { setFallbackBusy(false); }
   };
@@ -475,19 +492,25 @@ export default function ModelsPage() {
       <PluginSlot name="models:top" />
 
       {/* Tabbed content */}
-      <Tabs value={activeTab} onValueChange={(tab: string) => {
-        if (VALID_TABS.has(tab)) setActiveTab(tab);
-      }}>
-        {() => (
+      <Tabs defaultValue={activeTab}>
+        {(currentTab, setCurrentTab) => {
+          const selectedTab = VALID_TABS.has(activeTab) ? activeTab : currentTab;
+          const switchTab = (tab: string) => {
+            if (VALID_TABS.has(tab)) {
+              setCurrentTab(tab);
+              setActiveTab(tab);
+            }
+          };
+          return (
           <>
             <TabsList className="mb-2">
-              <TabsTrigger value="main-model" active={activeTab === "main-model"} onClick={() => setActiveTab("main-model")} data-testid="models-settings-main-tab">Main Model</TabsTrigger>
-              <TabsTrigger value="auxiliary-tasks" active={activeTab === "auxiliary-tasks"} onClick={() => setActiveTab("auxiliary-tasks")} data-testid="models-settings-aux-tab">Auxiliary Tasks</TabsTrigger>
-              <TabsTrigger value="used-models" active={activeTab === "used-models"} onClick={() => setActiveTab("used-models")} data-testid="models-used-models-tab">Used Models</TabsTrigger>
+              <TabsTrigger value="main-model" active={selectedTab === "main-model"} onClick={() => switchTab("main-model")} data-testid="models-settings-main-tab">Main Model</TabsTrigger>
+              <TabsTrigger value="auxiliary-tasks" active={selectedTab === "auxiliary-tasks"} onClick={() => switchTab("auxiliary-tasks")} data-testid="models-settings-aux-tab">Auxiliary Tasks</TabsTrigger>
+              <TabsTrigger value="used-models" active={selectedTab === "used-models"} onClick={() => switchTab("used-models")} data-testid="models-settings-used-tab">Used Models</TabsTrigger>
             </TabsList>
 
             {/* ── Main Model ── */}
-            {activeTab === "main-model" && (
+            {selectedTab === "main-model" && (
               <div className="space-y-6" data-testid="settings-tab-panel">
                 <Card data-testid="main-model-card">
                   <CardHeader className="pb-3">
@@ -521,6 +544,68 @@ export default function ModelsPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                {/* ── Fallback Chain (inside Main Model tab) ── */}
+                <Card data-testid="fallback-chain-card">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm">Fallback Chain</CardTitle>
+                        <span className="text-[10px] text-muted-foreground">providers tried in order when main fails</span>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <RefreshCw className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-xs font-medium uppercase tracking-wider">Fallback chain</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
+                        <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
+                      </div>
+                    </div>
+                    {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}
+                    {!fallbackLoading && fallbacks.length === 0 && (
+                      <div className="text-[10px] text-muted-foreground/60 italic py-2">No fallback providers configured. Add one to continue when the main model fails.</div>
+                    )}
+                    {!fallbackLoading && fallbacks.length > 0 && (
+                      <div className="space-y-1">
+                        {fallbacks.map((fb, idx) => (
+                          <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border/50 px-3 py-2 rounded" data-testid={`fallback-item-${idx}`}>
+                            <span className="text-xs text-muted-foreground/50 w-6 font-mono">{idx + 1}</span>
+                            <span className="text-xs font-mono flex-1 truncate">{fb.provider} · {fb.model}</span>
+                            <div className="flex items-center gap-1">
+                              <button type="button" disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 border border-border rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Move up" data-testid={`fallback-move-up-${idx}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                                <span className="hidden sm:inline">Up</span>
+                              </button>
+                              <button type="button" disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 border border-border rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Move down" data-testid={`fallback-move-down-${idx}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                                <span className="hidden sm:inline">Down</span>
+                              </button>
+                              <button type="button" onClick={() => removeFallback(idx)} className="flex items-center gap-1 px-2 py-1 text-xs bg-destructive/10 hover:bg-destructive/20 border border-destructive/20 text-destructive rounded transition-colors" aria-label="Remove" data-testid={`fallback-remove-${idx}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                <span className="hidden sm:inline">Remove</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {fallbackError && <div className="text-[10px] text-destructive" data-testid="fallback-error">{fallbackError}</div>}
+                    {pickerFallback && (
+                      <ModelPickerDialog
+                        key={`picker-fallback-${saveKey}`} loader={api.getModelOptions} alwaysGlobal confirmLabel="Save" title="Add Fallback Provider"
+                        onApply={async ({ provider, model }) => { addFallback({ provider, model }); }}
+                        onClose={() => setPickerFallback(null)}
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+
                 {data && (
                   <Card>
                     <CardContent className="py-6">
@@ -552,68 +637,18 @@ export default function ModelsPage() {
                     </CardContent>
                   </Card>
                 )}
-
-                {/* ── Fallback Chain (inside Main Model tab) ── */}
-                <Card data-testid="fallback-chain-card">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <Settings2 className="h-4 w-4 text-muted-foreground" />
-                        <CardTitle className="text-sm">Fallback Chain</CardTitle>
-                        <span className="text-[10px] text-muted-foreground">providers tried in order when main fails</span>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3 pt-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <RefreshCw className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs font-medium uppercase tracking-wider">Fallback chain</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
-                        <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
-                      </div>
-                    </div>
-                    {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}
-                    {!fallbackLoading && fallbacks.length === 0 && (
-                      <div className="text-[10px] text-muted-foreground/60 italic py-2">No fallback providers configured. Add one to continue when the main model fails.</div>
-                    )}
-                    {!fallbackLoading && fallbacks.length > 0 && (
-                      <div className="space-y-1">
-                        {fallbacks.map((fb, idx) => (
-                          <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border/50 px-2 py-1.5 rounded" data-testid={`fallback-item-${idx}`}>
-                            <span className="text-[10px] text-muted-foreground/50 w-4">{idx + 1}</span>
-                            <span className="text-xs font-mono flex-1 truncate">{fb.provider} · {fb.model}</span>
-                            <button type="button" disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move up" data-testid={`fallback-move-up-${idx}`}>↑</button>
-                            <button type="button" disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move down" data-testid={`fallback-move-down-${idx}`}>↓</button>
-                            <button type="button" onClick={() => removeFallback(idx)} className="text-[10px] p-0.5 hover:text-destructive" aria-label="Remove" data-testid={`fallback-remove-${idx}`}>×</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {fallbackError && <div className="text-[10px] text-destructive" data-testid="fallback-error">{fallbackError}</div>}
-                    {pickerFallback && (
-                      <ModelPickerDialog
-                        key={`picker-fallback-${saveKey}`} loader={api.getModelOptions} alwaysGlobal title="Add Fallback Provider"
-                        onApply={async ({ provider, model }) => { addFallback({ provider, model }); }}
-                        onClose={() => setPickerFallback(null)}
-                      />
-                    )}
-                  </CardContent>
-                </Card>
               </div>
             )}
 
             {/* ── Auxiliary Tasks ── */}
-            {activeTab === "auxiliary-tasks" && (
+            {selectedTab === "auxiliary-tasks" && (
               <div data-testid="auxiliary-tasks-tab-panel">
                 <AuxiliaryTasksPanel aux={aux} refreshKey={saveKey} onSaved={onAssigned} />
               </div>
             )}
 
             {/* ── Used Models ── */}
-            {activeTab === "used-models" && (
+            {selectedTab === "used-models" && (
               <div data-testid="used-models-tab-panel" className="contents">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -651,7 +686,8 @@ export default function ModelsPage() {
               </div>
             )}
           </>
-        )}
+          );
+        }}
       </Tabs>
 
       <PluginSlot name="models:bottom" />

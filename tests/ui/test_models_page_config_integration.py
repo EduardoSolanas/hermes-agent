@@ -610,7 +610,7 @@ class TestAddFallbackViaUI:
 
         # Step 6: Click the Switch/Confirm button
         # There are multiple "Switch" buttons on the page — use exact match
-        confirm_button = page.get_by_role("button", name="Switch", exact=True)
+        confirm_button = page.get_by_test_id("model-picker-confirm-button")
         if await confirm_button.is_enabled():
             await confirm_button.click()
             await page.wait_for_timeout(1000)
@@ -715,7 +715,7 @@ async def _add_via_picker(page: Page, provider_slug: str, model_name: str) -> No
 
     # Confirm
     # There are multiple "Switch" buttons on the page — use exact match
-    confirm = page.get_by_role("button", name="Switch", exact=True)
+    confirm = page.get_by_role("button", name="Save", exact=True)
     if await confirm.is_enabled():
         await confirm.click()
     else:

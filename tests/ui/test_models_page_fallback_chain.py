@@ -112,7 +112,7 @@ class TestRemoveFallbackProvider:
         if count > 0:
             # First item should have a remove button
             first_item = page.locator("[data-testid='fallback-item-0']")
-            remove_button = first_item.locator("button:has-text('×')")
+            remove_button = first_item.locator("button:has-text('Remove')")
             is_visible = await remove_button.is_visible()
             assert is_visible, "Remove button should exist on first item"
 
@@ -133,7 +133,7 @@ class TestReorderFallbackProviders:
             # Second item should have a move up button
             if count > 1:
                 second_item = page.locator("[data-testid='fallback-item-1']")
-                move_up_button = second_item.locator("button:has-text('↑')")
+                move_up_button = second_item.locator("button:has-text('Up')")
                 is_visible = await move_up_button.is_visible()
                 assert is_visible, "Move up button should exist on second item"
 
@@ -150,7 +150,7 @@ class TestReorderFallbackProviders:
             # First item should have a move down button
             first_item = page.locator("[data-testid='fallback-item-0']")
             # The down arrow button is a button element with text "↓"
-            move_down_button = first_item.locator("button:has-text('↓')")
+            move_down_button = first_item.locator("button:has-text('Down')")
             is_visible = await move_down_button.is_visible()
             assert is_visible, "Move down button should exist on first item"
 
