@@ -477,7 +477,8 @@ function ModelCard({
 
 type PickerTarget =
   | { kind: "main" }
-  | { kind: "aux"; task: string };
+  | { kind: "aux"; task: string }
+  | { kind: "fallback" };
 
 function AuxiliaryTasksModal({
   aux,
@@ -641,6 +642,28 @@ function ModelSettingsPanel({
 }) {
   const [auxModalOpen, setAuxModalOpen] = useState(false);
   const [picker, setPicker] = useState<PickerTarget | null>(null);
+  // Fallback chain state
+  const [fallbacks, setFallbacks] = useState<
+    { provider: string; model: string; base_url?: string }[]
+  >([]);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [fallbackBusy, setFallbackBusy] = useState(false);
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const [pickerFallback, setPickerFallback] = useState<PickerTarget | null>(
+    null,
+  );
+
+  // Load fallback chain on mount
+  useEffect(() => {
+    setFallbackLoading(true);
+    api
+      .getConfiguredModels()
+      .then((cfg) => {
+        setFallbacks(cfg.fallbacks);
+      })
+      .catch(() => {})
+      .finally(() => setFallbackLoading(false));
+  }, []);
 
   const mainProv = aux?.main.provider ?? "";
   const mainModel = aux?.main.model ?? "";
@@ -664,6 +687,44 @@ function ModelSettingsPanel({
   const auxOverrideCount = aux?.tasks.filter(
     (a) => a.provider && a.provider !== "auto",
   ).length ?? 0;
+
+  // Fallback chain helpers
+  const moveFallback = (from: number, to: number) => {
+    setFallbacks((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const addFallback = async ({
+    provider,
+    model,
+  }: {
+    provider: string;
+    model: string;
+  }) => {
+    setFallbacks((prev) => [...prev, { provider, model }]);
+    setPickerFallback(null);
+  };
+
+  const removeFallback = (idx: number) => {
+    setFallbacks((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const saveFallbacks = async () => {
+    setFallbackBusy(true);
+    setFallbackError(null);
+    try {
+      await api.setFallbackChain(fallbacks);
+      onSaved();
+    } catch (e) {
+      setFallbackError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFallbackBusy(false);
+    }
+  };
 
   return (
     <Card>
@@ -729,6 +790,106 @@ function ModelSettingsPanel({
           </Button>
         </div>
 
+        {/* Fallback chain */}
+        <div className="space-y-2" data-testid="fallback-chain">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-3 w-3 text-muted-foreground" />
+              <span className="text-xs font-medium uppercase tracking-wider">
+                Fallback chain
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                outlined
+                onClick={() => setPickerFallback({ kind: "fallback" })}
+                disabled={fallbackBusy}
+                className="text-xs"
+              >
+                Add
+              </Button>
+              <Button
+                size="sm"
+                outlined
+                onClick={saveFallbacks}
+                disabled={fallbackBusy}
+                className="text-xs"
+                prefix={fallbackBusy ? <Spinner /> : null}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+
+          {fallbackLoading && (
+            <div className="flex items-center justify-center py-4">
+              <Spinner className="text-xs text-muted-foreground" />
+            </div>
+          )}
+
+          {!fallbackLoading && fallbacks.length === 0 && (
+            <div className="text-[10px] text-muted-foreground/60 italic py-2">
+              No fallback providers configured. Add one to continue when the
+              main model fails.
+            </div>
+          )}
+
+          {!fallbackLoading && fallbacks.length > 0 && (
+            <div className="space-y-1">
+              {fallbacks.map((fb, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 bg-muted/30 border border-border/50 px-2 py-1.5 rounded"
+                  data-testid={`fallback-item-${idx}`}
+                >
+                  <span className="text-[10px] text-muted-foreground/50 w-4">
+                    {idx + 1}
+                  </span>
+                  <span className="text-xs font-mono flex-1 truncate">
+                    {fb.provider} · {fb.model}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    onClick={() => idx > 0 && moveFallback(idx, idx - 1)}
+                    className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === fallbacks.length - 1}
+                    onClick={() =>
+                      idx < fallbacks.length - 1 &&
+                      moveFallback(idx, idx + 1)
+                    }
+                    className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeFallback(idx)}
+                    className="text-[10px] p-0.5 hover:text-destructive"
+                    aria-label="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {fallbackError && (
+            <div className="text-[10px] text-destructive" data-testid="fallback-error">
+              {fallbackError}
+            </div>
+          )}
+        </div>
+
         {picker && (
           <ModelPickerDialog
             key={`picker-${refreshKey}`}
@@ -753,6 +914,19 @@ function ModelSettingsPanel({
             refreshKey={refreshKey}
             onSaved={onSaved}
             onClose={() => setAuxModalOpen(false)}
+          />
+        )}
+
+        {pickerFallback && (
+          <ModelPickerDialog
+            key={`picker-fallback-${refreshKey}`}
+            loader={api.getModelOptions}
+            alwaysGlobal
+            title="Add Fallback Provider"
+            onApply={async ({ provider, model }) => {
+              addFallback({ provider, model });
+            }}
+            onClose={() => setPickerFallback(null)}
           />
         )}
       </CardContent>
