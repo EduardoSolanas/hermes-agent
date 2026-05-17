@@ -8,6 +8,10 @@ Tests cover:
 - Verifying legacy fallback_model key is cleared on save
 - Config persistence across page reloads
 - Full workflow: add, reorder, remove, verify config
+- Custom base_url preservation in config.yaml
+
+All tests read the actual config.yaml via /api/config/raw and parse it
+with yaml.safe_load() — they do NOT rely on the API response alone.
 """
 from __future__ import annotations
 
@@ -39,6 +43,27 @@ async def _get_configured_models(page: Page) -> dict:
     }""")
 
 
+async def _get_raw_config_yaml(page: Page) -> str:
+    """Get the raw config.yaml content from the API."""
+    return await page.evaluate("""async () => {
+        const token = window.__HERMES_SESSION_TOKEN__;
+        const response = await fetch('/api/config/raw', {
+            headers: {
+                'X-Hermes-Session-Token': token,
+                'Content-Type': 'application/json'
+            }
+        });
+        const data = await response.json();
+        return data.yaml || '';
+    }""")
+
+
+def _parse_yaml_config(yaml_text: str) -> dict:
+    """Parse raw YAML config text into a dict."""
+    import yaml
+    return yaml.safe_load(yaml_text) or {}
+
+
 async def _save_fallbacks(page: Page, fallbacks: list[dict]) -> dict:
     """Save fallback chain via API and return response."""
     return await page.evaluate("""async (fb) => {
@@ -53,6 +78,27 @@ async def _save_fallbacks(page: Page, fallbacks: list[dict]) -> dict:
         });
         return await response.json();
     }""", fallbacks)
+
+
+async def _get_raw_config_yaml(page: Page) -> str:
+    """Get the raw config.yaml file content from the API."""
+    return await page.evaluate("""async () => {
+        const token = window.__HERMES_SESSION_TOKEN__;
+        const response = await fetch('/api/config/raw', {
+            headers: {
+                'X-Hermes-Session-Token': token,
+                'Content-Type': 'application/json'
+            }
+        });
+        const data = await response.json();
+        return data.yaml || '';
+    }""")
+
+
+def _parse_yaml_config(yaml_text: str) -> dict:
+    """Parse raw YAML config text into a dict."""
+    import yaml
+    return yaml.safe_load(yaml_text) or {}
 
 
 class TestAddFallbackProviderConfigChange:
@@ -81,14 +127,15 @@ class TestAddFallbackProviderConfigChange:
 
         assert response.get("ok") is True, f"API should return ok=True, got: {response}"
 
-        # Verify config was updated by reading back via API
-        configured = await _get_configured_models(page)
-        fallbacks = configured.get("fallbacks", [])
+        # Verify the actual config.yaml file content
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+
+        assert "fallback_providers" in config, "config.yaml must contain fallback_providers"
+        fallbacks = config["fallback_providers"]
         assert len(fallbacks) >= 1, "Config should have at least one fallback"
-        assert any(
-            fb.get("provider") == "openrouter" and fb.get("model") == "gpt-4"
-            for fb in fallbacks
-        ), "Config should contain the new fallback provider"
+        assert fallbacks[0]["provider"] == "openrouter"
+        assert fallbacks[0]["model"] == "gpt-4"
 
     @pytest.mark.asyncio
     async def test_add_multiple_providers_to_config(self, page: Page):
@@ -102,16 +149,16 @@ class TestAddFallbackProviderConfigChange:
 
         assert response.get("ok") is True
 
-        configured = await _get_configured_models(page)
-        fallbacks = configured.get("fallbacks", [])
+        # Verify the actual config.yaml file content
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
 
+        fallbacks = config.get("fallback_providers", [])
         assert len(fallbacks) >= 2, f"Config should have at least 2 fallbacks, got {len(fallbacks)}"
-
-        providers_found = {fb.get("provider"): fb.get("model") for fb in fallbacks}
-        assert "openrouter" in providers_found
-        assert "openai" in providers_found
-        assert providers_found["openrouter"] == "gpt-4"
-        assert providers_found["openai"] == "gpt-3.5-turbo"
+        assert fallbacks[0]["provider"] == "openrouter"
+        assert fallbacks[0]["model"] == "gpt-4"
+        assert fallbacks[1]["provider"] == "openai"
+        assert fallbacks[1]["model"] == "gpt-3.5-turbo"
 
 
 class TestRemoveFallbackProviderConfigChange:
@@ -126,17 +173,21 @@ class TestRemoveFallbackProviderConfigChange:
             {"provider": "test2", "model": "model2"}
         ])
 
-        configured_after_add = await _get_configured_models(page)
-        fallbacks = configured_after_add.get("fallbacks", [])
-        assert len(fallbacks) >= 2, "Should have at least 2 fallbacks"
+        # Verify config.yaml has them
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        fallbacks = config.get("fallback_providers", [])
+        assert len(fallbacks) >= 2, "Should have at least 2 fallbacks in config.yaml"
 
         # Clear them via API
         response = await _save_fallbacks(page, [])
         assert response.get("ok") is True
 
-        configured_after_clear = await _get_configured_models(page)
-        cleared_fallbacks = configured_after_clear.get("fallbacks", [])
-        assert len(cleared_fallbacks) == 0, f"Fallbacks should be cleared, got: {cleared_fallbacks}"
+        # Verify config.yaml was cleared
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        cleared_fallbacks = config.get("fallback_providers", [])
+        assert len(cleared_fallbacks) == 0, f"Fallbacks should be cleared from config.yaml, got: {cleared_fallbacks}"
 
 
 class TestReorderFallbackProvidersConfigChange:
@@ -152,12 +203,13 @@ class TestReorderFallbackProvidersConfigChange:
             {"provider": "third", "model": "model3"}
         ])
 
-        # Verify initial order
-        configured_before = await _get_configured_models(page)
-        fallbacks_before = configured_before.get("fallbacks", [])
-        assert fallbacks_before[0]["provider"] == "first"
-        assert fallbacks_before[1]["provider"] == "second"
-        assert fallbacks_before[2]["provider"] == "third"
+        # Verify initial order in config.yaml
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        fallbacks = config["fallback_providers"]
+        assert fallbacks[0]["provider"] == "first"
+        assert fallbacks[1]["provider"] == "second"
+        assert fallbacks[2]["provider"] == "third"
 
         # Reorder via API (swap first and second)
         response = await _save_fallbacks(page, [
@@ -167,13 +219,14 @@ class TestReorderFallbackProvidersConfigChange:
         ])
         assert response.get("ok") is True
 
-        # Verify the new order is in config
-        configured_after = await _get_configured_models(page)
-        fallbacks_after = configured_after.get("fallbacks", [])
+        # Verify the new order in config.yaml
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        fallbacks = config["fallback_providers"]
 
-        assert fallbacks_after[0]["provider"] == "second"
-        assert fallbacks_after[1]["provider"] == "first"
-        assert fallbacks_after[2]["provider"] == "third"
+        assert fallbacks[0]["provider"] == "second"
+        assert fallbacks[1]["provider"] == "first"
+        assert fallbacks[2]["provider"] == "third"
 
 
 class TestSaveClearsLegacyFallbackModel:
@@ -182,17 +235,27 @@ class TestSaveClearsLegacyFallbackModel:
     @pytest.mark.asyncio
     async def test_legacy_fallback_model_key_is_cleared(self, page: Page):
         """Saving fallback_providers should remove the legacy fallback_model key."""
+        # First, verify config.yaml doesn't have fallback_model (clean state)
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        has_legacy_before = "fallback_model" in config
+
         # Save new fallback_providers
         response = await _save_fallbacks(page, [
             {"provider": "new", "model": "new-model"}
         ])
         assert response.get("ok") is True
 
-        # Verify the response doesn't include legacy fallback_model
-        # (The API returns resolved chain, not the raw config)
-        assert response.get("ok") is True
-        assert "fallbacks" in response
-        assert isinstance(response["fallbacks"], list)
+        # Verify config.yaml no longer has fallback_model
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+        assert "fallback_model" not in config, "Legacy fallback_model should be cleared from config.yaml"
+
+        # Verify fallback_providers is present with correct content
+        assert "fallback_providers" in config
+        assert len(config["fallback_providers"]) >= 1
+        assert config["fallback_providers"][0]["provider"] == "new"
+        assert config["fallback_providers"][0]["model"] == "new-model"
 
 
 class TestFallbackChainValidation:
@@ -290,23 +353,25 @@ class TestConfigPersistenceAcrossReloads:
             {"provider": "persistent-test", "model": "test-model"}
         ])
 
-        # Verify it's in config
-        configured_before = await _get_configured_models(page)
+        # Verify it's in the actual config.yaml file
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
         assert any(
             fb.get("provider") == "persistent-test"
-            for fb in configured_before.get("fallbacks", [])
-        ), "Provider should be in config before reload"
+            for fb in config.get("fallback_providers", [])
+        ), "Provider should be in config.yaml before reload"
 
         # Reload the page
         await page.reload()
         await page.wait_for_timeout(2000)
 
-        # Verify config still has the change
-        configured_after = await _get_configured_models(page)
+        # Verify config.yaml still has the change
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
         assert any(
             fb.get("provider") == "persistent-test"
-            for fb in configured_after.get("fallbacks", [])
-        ), "Provider should still be in config after reload"
+            for fb in config.get("fallback_providers", [])
+        ), "Provider should still be in config.yaml after reload"
 
         # Verify the UI reflects this
         # Check that fallback items are visible (either existing or new)
@@ -333,9 +398,10 @@ class TestFullWorkflow:
         assert response1.get("ok") is True
         assert len(response1["fallbacks"]) == 1
 
-        # Verify config
-        config1 = await _get_configured_models(page)
-        assert config1["fallbacks"][0]["provider"] == "alpha"
+        # Verify config.yaml
+        yaml_text = await _get_raw_config_yaml(page)
+        config1 = _parse_yaml_config(yaml_text)
+        assert config1["fallback_providers"][0]["provider"] == "alpha"
 
         # Step 2: Add second provider
         response2 = await _save_fallbacks(page, [
@@ -345,10 +411,11 @@ class TestFullWorkflow:
         assert response2.get("ok") is True
         assert len(response2["fallbacks"]) == 2
 
-        # Verify config order
-        config2 = await _get_configured_models(page)
-        assert config2["fallbacks"][0]["provider"] == "alpha"
-        assert config2["fallbacks"][1]["provider"] == "beta"
+        # Verify config.yaml order
+        yaml_text = await _get_raw_config_yaml(page)
+        config2 = _parse_yaml_config(yaml_text)
+        assert config2["fallback_providers"][0]["provider"] == "alpha"
+        assert config2["fallback_providers"][1]["provider"] == "beta"
 
         # Step 3: Reorder (beta first)
         response3 = await _save_fallbacks(page, [
@@ -357,18 +424,20 @@ class TestFullWorkflow:
         ])
         assert response3.get("ok") is True
 
-        # Verify new order in config
-        config3 = await _get_configured_models(page)
-        assert config3["fallbacks"][0]["provider"] == "beta"
-        assert config3["fallbacks"][1]["provider"] == "alpha"
+        # Verify new order in config.yaml
+        yaml_text = await _get_raw_config_yaml(page)
+        config3 = _parse_yaml_config(yaml_text)
+        assert config3["fallback_providers"][0]["provider"] == "beta"
+        assert config3["fallback_providers"][1]["provider"] == "alpha"
 
         # Step 4: Remove all
         response4 = await _save_fallbacks(page, [])
         assert response4.get("ok") is True
 
-        # Verify cleared
-        config4 = await _get_configured_models(page)
-        assert len(config4.get("fallbacks", [])) == 0
+        # Verify config.yaml is cleared
+        yaml_text = await _get_raw_config_yaml(page)
+        config4 = _parse_yaml_config(yaml_text)
+        assert len(config4.get("fallback_providers", [])) == 0
 
 
 class TestBaseUrlPreservation:
@@ -390,11 +459,15 @@ class TestBaseUrlPreservation:
 
         assert response.get("ok") is True
 
-        # Verify base_url is in response
-        assert len(response["fallbacks"]) >= 1
-        assert response["fallbacks"][0]["provider"] == "local-hermes-ov"
-        assert response["fallbacks"][0]["model"] == "test-model"
-        assert response["fallbacks"][0].get("base_url") == "http://192.168.1.161:11434/v1"
+        # Verify base_url is in the actual config.yaml
+        yaml_text = await _get_raw_config_yaml(page)
+        config = _parse_yaml_config(yaml_text)
+
+        fallbacks = config["fallback_providers"]
+        assert len(fallbacks) >= 1
+        assert fallbacks[0]["provider"] == "local-hermes-ov"
+        assert fallbacks[0]["model"] == "test-model"
+        assert fallbacks[0].get("base_url") == "http://192.168.1.161:11434/v1"
 
 
 class TestConfigFileFormat:
