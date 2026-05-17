@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Brain,
   ChevronDown,
@@ -30,6 +31,14 @@ import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { Tabs, TabsList, TabsTrigger } from "@nous-research/ui/ui/components/tabs";
+
+const VALID_TABS = new Set(["main-model", "auxiliary-tasks", "used-models"]);
+
+function getTabFromQuery(searchParams: URLSearchParams): string {
+  const tab = searchParams.get("tab");
+  if (tab && VALID_TABS.has(tab)) return tab;
+  return "main-model";
+}
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -357,6 +366,16 @@ function AuxiliaryTasksPanel({
 /* ─── Page ─── */
 
 export default function ModelsPage() {
+  const [searchParams] = useSearchParams();
+  const defaultTab = getTabFromQuery(searchParams);
+  const [activeTab, setActiveTab] = useState(defaultTab);
+
+  // Sync active tab with URL query param changes
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab && VALID_TABS.has(tab)) setActiveTab(tab);
+  }, [searchParams]);
+
   const [days, setDays] = useState(30);
   const [data, setData] = useState<ModelsAnalyticsResponse | null>(null);
   const [aux, setAux] = useState<AuxiliaryModelsResponse | null>(null);
@@ -455,18 +474,20 @@ export default function ModelsPage() {
     <div className="flex flex-col gap-6">
       <PluginSlot name="models:top" />
 
-      {/* Single outer tab: SETTINGS */}
-      <Tabs defaultValue="main-model">
-        {(_active, setActiveTab) => (
+      {/* Tabbed content */}
+      <Tabs value={activeTab} onValueChange={(tab: string) => {
+        if (VALID_TABS.has(tab)) setActiveTab(tab);
+      }}>
+        {() => (
           <>
             <TabsList className="mb-2">
-              <TabsTrigger value="main-model" active={_active === "main-model"} onClick={() => setActiveTab("main-model")} data-testid="models-settings-main-tab">Main Model</TabsTrigger>
-              <TabsTrigger value="auxiliary-tasks" active={_active === "auxiliary-tasks"} onClick={() => setActiveTab("auxiliary-tasks")} data-testid="models-settings-aux-tab">Auxiliary Tasks</TabsTrigger>
-              <TabsTrigger value="used-models" active={_active === "used-models"} onClick={() => setActiveTab("used-models")} data-testid="models-used-models-tab">Used Models</TabsTrigger>
+              <TabsTrigger value="main-model" active={activeTab === "main-model"} onClick={() => setActiveTab("main-model")} data-testid="models-settings-main-tab">Main Model</TabsTrigger>
+              <TabsTrigger value="auxiliary-tasks" active={activeTab === "auxiliary-tasks"} onClick={() => setActiveTab("auxiliary-tasks")} data-testid="models-settings-aux-tab">Auxiliary Tasks</TabsTrigger>
+              <TabsTrigger value="used-models" active={activeTab === "used-models"} onClick={() => setActiveTab("used-models")} data-testid="models-used-models-tab">Used Models</TabsTrigger>
             </TabsList>
 
             {/* ── Main Model ── */}
-            {_active === "main-model" && (
+            {activeTab === "main-model" && (
               <div className="space-y-6" data-testid="settings-tab-panel">
                 <Card data-testid="main-model-card">
                   <CardHeader className="pb-3">
@@ -585,14 +606,14 @@ export default function ModelsPage() {
             )}
 
             {/* ── Auxiliary Tasks ── */}
-            {_active === "auxiliary-tasks" && (
+            {activeTab === "auxiliary-tasks" && (
               <div data-testid="auxiliary-tasks-tab-panel">
                 <AuxiliaryTasksPanel aux={aux} refreshKey={saveKey} onSaved={onAssigned} />
               </div>
             )}
 
             {/* ── Used Models ── */}
-            {_active === "used-models" && (
+            {activeTab === "used-models" && (
               <div data-testid="used-models-tab-panel" className="contents">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">

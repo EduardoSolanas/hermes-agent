@@ -146,6 +146,11 @@ const BUILTIN_NAV_REST: NavItem[] = [
     labelKey: "models",
     label: "Models",
     icon: Cpu,
+    children: [
+      { path: "/models?tab=main-model", labelKey: "models.mainModel", label: "Main Model" },
+      { path: "/models?tab=auxiliary-tasks", labelKey: "models.auxiliaryTasks", label: "Auxiliary Tasks" },
+      { path: "/models?tab=used-models", labelKey: "models.usedModels", label: "Used Models" },
+    ],
   },
   { path: "/logs", labelKey: "logs", label: "Logs", icon: FileText },
   { path: "/cron", labelKey: "cron", label: "Cron", icon: Clock },
@@ -653,12 +658,71 @@ export default function App() {
 }
 
 function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
-  const { path, label, labelKey, icon: Icon } = item;
+  const { path, label, labelKey, icon: Icon, children } = item;
 
   const navLabel = labelKey
     ? ((t.app.nav as Record<string, string>)[labelKey] ?? label)
     : label;
 
+  // Item has children → render as section header + sub-items
+  if (children && children.length > 0) {
+    return (
+      <li key={path}>
+        <div className="px-5 pt-2.5 pb-1">
+          <span
+            className="font-mondwest text-[0.6rem] tracking-[0.15em] uppercase opacity-30"
+          >
+            {navLabel}
+          </span>
+        </div>
+        <ul className="flex flex-col">
+          {children.map((child) => {
+            const childLabel = child.labelKey
+              ? ((t.app.nav as Record<string, string>)[child.labelKey] ?? child.label)
+              : child.label;
+            return (
+              <li key={child.path}>
+                <NavLink
+                  to={child.path}
+                  onClick={closeMobile}
+                  className={({ isActive }) =>
+                    cn(
+                      "group relative flex items-center gap-3",
+                      "px-5 py-2.5",
+                      "font-mondwest text-[0.8rem] tracking-[0.12em]",
+                      "whitespace-nowrap transition-colors cursor-pointer",
+                      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground",
+                      isActive ? "text-midground" : "opacity-60 hover:opacity-100",
+                    )
+                  }
+                  style={{ clipPath: "var(--component-tab-clip-path)" }}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="truncate">{childLabel}</span>
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-0.5 left-1.5 right-1.5 bg-midground opacity-0 pointer-events-none transition-opacity duration-200 group-hover:opacity-5"
+                      />
+                      {isActive && (
+                        <span
+                          aria-hidden
+                          className="absolute left-0 top-0 bottom-0 w-px bg-midground"
+                          style={{ mixBlendMode: "plus-lighter" }}
+                        />
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              </li>
+            );
+          })}
+        </ul>
+      </li>
+    );
+  }
+
+  // Regular nav item
   return (
     <li>
       <NavLink
@@ -819,6 +883,7 @@ interface NavItem {
   label: string;
   labelKey?: string;
   path: string;
+  children?: Array<{ path: string; labelKey?: string; label: string }>;
 }
 
 interface SidebarNavLinkProps {
