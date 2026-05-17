@@ -461,14 +461,13 @@ export default function ModelsPage() {
           <>
             <TabsList className="mb-2">
               <TabsTrigger value="main-model" active={_active === "main-model"} onClick={() => setActiveTab("main-model")} data-testid="models-settings-main-tab">Main Model</TabsTrigger>
-              <TabsTrigger value="fallback-chain" active={_active === "fallback-chain"} onClick={() => setActiveTab("fallback-chain")} data-testid="models-settings-fallback-tab">Fallback Chain</TabsTrigger>
               <TabsTrigger value="auxiliary-tasks" active={_active === "auxiliary-tasks"} onClick={() => setActiveTab("auxiliary-tasks")} data-testid="models-settings-aux-tab">Auxiliary Tasks</TabsTrigger>
               <TabsTrigger value="used-models" active={_active === "used-models"} onClick={() => setActiveTab("used-models")} data-testid="models-used-models-tab">Used Models</TabsTrigger>
             </TabsList>
 
             {/* ── Main Model ── */}
             {_active === "main-model" && (
-              <div className="grid gap-6 lg:grid-cols-2" data-testid="settings-tab-panel">
+              <div className="space-y-6" data-testid="settings-tab-panel">
                 <Card data-testid="main-model-card">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -532,59 +531,57 @@ export default function ModelsPage() {
                     </CardContent>
                   </Card>
                 )}
-              </div>
-            )}
 
-            {/* ── Fallback Chain ── */}
-            {_active === "fallback-chain" && (
-              <Card data-testid="fallback-chain-card">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <Settings2 className="h-4 w-4 text-muted-foreground" />
-                      <CardTitle className="text-sm">Fallback Chain</CardTitle>
-                      <span className="text-[10px] text-muted-foreground">providers tried in order when main fails</span>
+                {/* ── Fallback Chain (inside Main Model tab) ── */}
+                <Card data-testid="fallback-chain-card">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm">Fallback Chain</CardTitle>
+                        <span className="text-[10px] text-muted-foreground">providers tried in order when main fails</span>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3 pt-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <RefreshCw className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs font-medium uppercase tracking-wider">Fallback chain</span>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <RefreshCw className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-xs font-medium uppercase tracking-wider">Fallback chain</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
+                        <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
-                      <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
-                    </div>
-                  </div>
-                  {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}
-                  {!fallbackLoading && fallbacks.length === 0 && (
-                    <div className="text-[10px] text-muted-foreground/60 italic py-2">No fallback providers configured. Add one to continue when the main model fails.</div>
-                  )}
-                  {!fallbackLoading && fallbacks.length > 0 && (
-                    <div className="space-y-1">
-                      {fallbacks.map((fb, idx) => (
-                        <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border/50 px-2 py-1.5 rounded" data-testid={`fallback-item-${idx}`}>
-                          <span className="text-[10px] text-muted-foreground/50 w-4">{idx + 1}</span>
-                          <span className="text-xs font-mono flex-1 truncate">{fb.provider} · {fb.model}</span>
-                          <button type="button" disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move up" data-testid={`fallback-move-up-${idx}`}>↑</button>
-                          <button type="button" disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move down" data-testid={`fallback-move-down-${idx}`}>↓</button>
-                          <button type="button" onClick={() => removeFallback(idx)} className="text-[10px] p-0.5 hover:text-destructive" aria-label="Remove" data-testid={`fallback-remove-${idx}`}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {fallbackError && <div className="text-[10px] text-destructive" data-testid="fallback-error">{fallbackError}</div>}
-                  {pickerFallback && (
-                    <ModelPickerDialog
-                      key={`picker-fallback-${saveKey}`} loader={api.getModelOptions} alwaysGlobal title="Add Fallback Provider"
-                      onApply={async ({ provider, model }) => { addFallback({ provider, model }); }}
-                      onClose={() => setPickerFallback(null)}
-                    />
-                  )}
-                </CardContent>
-              </Card>
+                    {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}
+                    {!fallbackLoading && fallbacks.length === 0 && (
+                      <div className="text-[10px] text-muted-foreground/60 italic py-2">No fallback providers configured. Add one to continue when the main model fails.</div>
+                    )}
+                    {!fallbackLoading && fallbacks.length > 0 && (
+                      <div className="space-y-1">
+                        {fallbacks.map((fb, idx) => (
+                          <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border/50 px-2 py-1.5 rounded" data-testid={`fallback-item-${idx}`}>
+                            <span className="text-[10px] text-muted-foreground/50 w-4">{idx + 1}</span>
+                            <span className="text-xs font-mono flex-1 truncate">{fb.provider} · {fb.model}</span>
+                            <button type="button" disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move up" data-testid={`fallback-move-up-${idx}`}>↑</button>
+                            <button type="button" disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="text-[10px] p-0.5 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move down" data-testid={`fallback-move-down-${idx}`}>↓</button>
+                            <button type="button" onClick={() => removeFallback(idx)} className="text-[10px] p-0.5 hover:text-destructive" aria-label="Remove" data-testid={`fallback-remove-${idx}`}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {fallbackError && <div className="text-[10px] text-destructive" data-testid="fallback-error">{fallbackError}</div>}
+                    {pickerFallback && (
+                      <ModelPickerDialog
+                        key={`picker-fallback-${saveKey}`} loader={api.getModelOptions} alwaysGlobal title="Add Fallback Provider"
+                        onApply={async ({ provider, model }) => { addFallback({ provider, model }); }}
+                        onClose={() => setPickerFallback(null)}
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             )}
 
             {/* ── Auxiliary Tasks ── */}

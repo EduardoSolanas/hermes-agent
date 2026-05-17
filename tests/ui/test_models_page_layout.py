@@ -1,9 +1,8 @@
 """Playwright UI tests for the Models page layout.
 
 New structure:
-- Single outer Tab level with 4 tabs:
-  - Main Model: Main Model card + Stats card
-  - Fallback Chain: Full fallback chain UI
+- Single outer Tab level with 3 tabs:
+  - Main Model: Main Model card + Stats card + Fallback Chain card (below)
   - Auxiliary Tasks: Inline panel (no modal)
   - Used Models: Analytics grid with period controls
 """
@@ -21,7 +20,6 @@ async def _go_to_tab(page: Page, tab_name: str) -> None:
     await page.wait_for_timeout(2000)  # Wait for initial render
     tab_selectors = {
         "Main Model": "[data-testid='models-settings-main-tab']",
-        "Fallback Chain": "[data-testid='models-settings-fallback-tab']",
         "Auxiliary Tasks": "[data-testid='models-settings-aux-tab']",
         "Used Models": "[data-testid='models-used-models-tab']",
     }
@@ -44,13 +42,22 @@ async def test_settings_has_no_outer_tab(page: Page):
 
 @pytest.mark.asyncio
 async def test_all_tabs_visible(page: Page):
-    """All 4 tabs should be visible at the top."""
+    """All 3 tabs should be visible at the top."""
     await page.goto(MODELS_PAGE_URL)
     await page.wait_for_timeout(2000)
     await expect(page.locator("[data-testid='models-settings-main-tab']")).to_be_visible()
-    await expect(page.locator("[data-testid='models-settings-fallback-tab']")).to_be_visible()
     await expect(page.locator("[data-testid='models-settings-aux-tab']")).to_be_visible()
     await expect(page.locator("[data-testid='models-used-models-tab']")).to_be_visible()
+
+
+@pytest.mark.asyncio
+async def test_fallback_chain_tab_does_not_exist(page: Page):
+    """There should be no standalone Fallback Chain tab."""
+    await page.goto(MODELS_PAGE_URL)
+    await page.wait_for_timeout(2000)
+    fallback_tab = page.locator("[data-testid='models-settings-fallback-tab']")
+    count = await fallback_tab.count()
+    assert count == 0, "There should be no standalone Fallback Chain tab"
 
 
 @pytest.mark.asyncio
@@ -61,7 +68,14 @@ async def test_main_model_tab_has_card(page: Page):
 
 
 @pytest.mark.asyncio
-async def test_main_model_tab_stats_visible(page: Page):
+async def test_main_model_tab_has_fallback_chain(page: Page):
+    """Main Model tab should also show the Fallback Chain card below the main model."""
+    await _go_to_tab(page, "Main Model")
+    await expect(page.locator("[data-testid='fallback-chain-card']")).to_be_visible()
+
+
+@pytest.mark.asyncio
+async def test_main_model_tab_has_stats(page: Page):
     """Main Model tab should show the stats card."""
     await _go_to_tab(page, "Main Model")
     stats = page.locator("[data-testid='settings-tab-panel'] > div > div > div")
@@ -70,32 +84,31 @@ async def test_main_model_tab_stats_visible(page: Page):
 
 
 @pytest.mark.asyncio
-async def test_fallback_chain_tab_has_add_button(page: Page):
-    """Fallback Chain tab should have Add button."""
-    await _go_to_tab(page, "Fallback Chain")
+async def test_fallback_chain_has_add_button(page: Page):
+    """Fallback Chain card (inside Main Model tab) should have Add button."""
+    await _go_to_tab(page, "Main Model")
     add_btn = page.locator("[data-testid='fallback-chain-card'] [data-testid='fallback-add-button']")
     await expect(add_btn).to_be_visible()
 
 
 @pytest.mark.asyncio
-async def test_fallback_chain_tab_has_save_button(page: Page):
-    """Fallback Chain tab should have Save button."""
-    await _go_to_tab(page, "Fallback Chain")
+async def test_fallback_chain_has_save_button(page: Page):
+    """Fallback Chain card should have Save button."""
+    await _go_to_tab(page, "Main Model")
     save_btn = page.locator("[data-testid='fallback-chain-card'] [data-testid='fallback-save-button']")
     await expect(save_btn).to_be_visible()
 
 
 @pytest.mark.asyncio
-async def test_fallback_chain_tab_add_opens_picker(page: Page):
-    """Add button in Fallback Chain tab should open the model picker."""
-    await _go_to_tab(page, "Fallback Chain")
+async def test_fallback_chain_add_opens_picker(page: Page):
+    """Add button in Fallback Chain card should open the model picker."""
+    await _go_to_tab(page, "Main Model")
     add_btn = page.locator("[data-testid='fallback-add-button']")
     await add_btn.click()
     await page.wait_for_timeout(500)
     picker = page.locator("[data-testid='model-picker-dialog']")
     visible = await picker.count() > 0
     if not visible:
-        # Check for dialog title text as fallback
         visible = await page.locator("text=Add Fallback Provider").count() > 0
     assert visible, "Model picker dialog should be visible after clicking Add"
 
@@ -147,5 +160,4 @@ async def test_used_models_tab_renders_content(page: Page):
     empty_state = page.locator("[data-testid='used-models-empty-state']")
     cards_count = await cards.count()
     empty_count = await empty_state.count()
-    # Should have at least cards OR empty state
     assert cards_count > 0 or empty_count > 0, "Should show model cards or empty state"
