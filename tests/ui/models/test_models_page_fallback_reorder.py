@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from playwright.async_api import Page, expect
 
-from tests.ui.conftest import MODELS_PAGE_URL
+from tests.ui.models.conftest import MODELS_PAGE_URL
 
 pytestmark = pytest.mark.xdist_group("models_page_config")
 

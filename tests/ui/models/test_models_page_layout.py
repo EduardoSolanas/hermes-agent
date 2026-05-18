@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from playwright.async_api import Page, expect
 
-from tests.ui.conftest import MODELS_PAGE_URL
+from tests.ui.models.conftest import MODELS_PAGE_URL
 
 
 async def _go_to_tab(page: Page, tab_name: str) -> None:
