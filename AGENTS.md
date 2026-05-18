@@ -15,7 +15,7 @@ main checkout).
 
 ### UI Tests (Playwright)
 
-UI tests in `tests/ui/` use Playwright to drive a headless Chromium instance
+UI tests in `tests/web/` use Playwright to drive a headless Chromium instance
 against the live dashboard. After installing the `dev` extra, install the
 browser binary:
 
