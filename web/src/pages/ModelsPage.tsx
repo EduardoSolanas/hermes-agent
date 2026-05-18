@@ -397,7 +397,7 @@ export default function ModelsPage() {
 
   useEffect(() => {
     setFallbackLoading(true);
-    api.getConfiguredModels().then((cfg) => { fallbacksRef.current = cfg.fallbacks; setFallbacks(cfg.fallbacks); }).catch(() => {}).finally(() => setFallbackLoading(false));
+    api.getFallbackProviders().then((cfg) => { fallbacksRef.current = cfg.fallbacks; setFallbacks(cfg.fallbacks); }).catch(() => {}).finally(() => setFallbackLoading(false));
   }, []);
 
   useEffect(() => {
