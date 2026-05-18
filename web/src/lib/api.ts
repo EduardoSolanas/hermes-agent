@@ -93,15 +93,22 @@ export const api = {
   getModelInfo: () => fetchJSON<ModelInfoResponse>("/api/model/info"),
   getModelOptions: () => fetchJSON<ModelOptionsResponse>("/api/model/options"),
   getAuxiliaryModels: () => fetchJSON<AuxiliaryModelsResponse>("/api/model/auxiliary"),
-  getFallbackProviders: () => fetchJSON<FallbackProvidersResponse>("/api/model/fallbacks"),
-  saveFallbackProviders: (fallbacks: FallbackProviderEntry[]) =>
-    fetchJSON<FallbackProvidersSaveResponse>("/api/model/fallbacks", {
+  setModelAssignment: (body: ModelAssignmentRequest) =>
+    fetchJSON<ModelAssignmentResponse>("/api/model/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getConfiguredModels: () =>
+    fetchJSON<ConfiguredModelsResponse>("/api/model/configured"),
+  setFallbackChain: (fallbacks: { provider: string; model: string; base_url?: string }[]) =>
+    fetchJSON<SetFallbacksResponse>("/api/model/fallbacks", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fallbacks }),
     }),
-  setModelAssignment: (body: ModelAssignmentRequest) =>
-    fetchJSON<ModelAssignmentResponse>("/api/model/set", {
+  registerModel: (body: { provider: string; model: string; capabilities?: Record<string, unknown> }) =>
+    fetchJSON<RegisterModelResponse>("/api/model/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -639,32 +646,16 @@ export interface ModelOptionsResponse {
   providers?: ModelOptionProvider[];
 }
 
-export interface AuxiliaryTaskAssignment {
-  task: string;
-  provider: string;
-  model: string;
-  base_url: string;
-}
-
 export interface AuxiliaryModelsResponse {
   tasks: AuxiliaryTaskAssignment[];
   main: { provider: string; model: string };
 }
 
-export interface FallbackProviderEntry {
+export interface AuxiliaryTaskAssignment {
+  task: string;
   provider: string;
   model: string;
   base_url?: string;
-  api_mode?: string;
-}
-
-export interface FallbackProvidersResponse {
-  fallbacks: FallbackProviderEntry[];
-}
-
-export interface FallbackProvidersSaveResponse {
-  ok: boolean;
-  fallbacks: FallbackProviderEntry[];
 }
 
 export interface ModelAssignmentRequest {
@@ -682,6 +673,32 @@ export interface ModelAssignmentResponse {
   model?: string;
   tasks?: string[];
   reset?: boolean;
+}
+
+// ── Centralized model config types ──────────────────────────────────────
+
+export interface ModelInfo {
+  id: string;
+  provider: string;
+  model: string;
+  base_url?: string;
+  capabilities?: Record<string, unknown>;
+}
+
+export interface ConfiguredModelsResponse {
+  main: ModelInfo | null;
+  fallbacks: ModelInfo[];
+  auxiliary: AuxiliaryTaskAssignment[];
+}
+
+export interface SetFallbacksResponse {
+  ok: boolean;
+  fallbacks: ModelInfo[];
+}
+
+export interface RegisterModelResponse {
+  ok: boolean;
+  id: string;
 }
 
 // ── OAuth provider types ────────────────────────────────────────────────
