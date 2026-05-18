@@ -26,6 +26,9 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Stats } from "@nous-research/ui/ui/components/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@nous-research/ui/ui/components/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Toast } from "@/components/Toast";
+import { useToast } from "@/hooks/useToast";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
@@ -392,7 +395,9 @@ export default function ModelsPage() {
   const fallbacksRef = useRef<{ provider: string; model: string; base_url?: string }[]>([]);
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [fallbackBusy, setFallbackBusy] = useState(false);
-  const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
+  const [removeConfirmIdx, setRemoveConfirmIdx] = useState<number | null>(null);
+  const [removeLoading, setRemoveLoading] = useState(false);
   const [pickerFallback, setPickerFallback] = useState<PickerTarget | null>(null);
 
   useEffect(() => {
@@ -423,31 +428,38 @@ export default function ModelsPage() {
     fallbacksRef.current = next;
     setFallbacks(next);
     // Auto-save on reorder so changes persist immediately
-    setFallbackBusy(true); setFallbackError(null);
-    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); }
-    catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
+    setFallbackBusy(true);
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); showToast("Added", "success"); }
+    catch (e) { showToast(e instanceof Error ? e.message : String(e), "error"); }
     finally { setFallbackBusy(false); }
   };
 
   const addFallback = async ({ provider, model }: { provider: string; model: string }) => {
+    const key = `${provider}/${model}`;
+    if (fallbacksRef.current.some(f => `${f.provider}/${f.model}` === key)) {
+      showToast("This provider/model is already in the fallback chain", "error");
+      return;
+    }
     const next = [...fallbacksRef.current, { provider, model }];
     fallbacksRef.current = next;
     setFallbacks(next);
     setPickerFallback(null);
+    setFallbackBusy(true);
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); showToast("Added", "success"); }
+    catch (e) { showToast(e instanceof Error ? e.message : String(e), "error"); fallbacksRef.current = fallbacks; setFallbacks(fallbacks); }
+    finally { setFallbackBusy(false); }
   };
 
-  const removeFallback = (idx: number) => {
+  const removeFallback = async (idx: number) => {
+    setRemoveLoading(true);
     const next = fallbacksRef.current.filter((_, i) => i !== idx);
     fallbacksRef.current = next;
     setFallbacks(next);
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); showToast("Removed", "success"); }
+    catch (e) { showToast(e instanceof Error ? e.message : String(e), "error"); fallbacksRef.current = fallbacks; setFallbacks(fallbacks); }
+    finally { setRemoveLoading(false); setRemoveConfirmIdx(null); }
   };
 
-  const saveFallbacks = async () => {
-    setFallbackBusy(true); setFallbackError(null);
-    try { await api.setFallbackChain(fallbacksRef.current); setSaveKey((k) => k + 1); }
-    catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
-    finally { setFallbackBusy(false); }
-  };
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
@@ -564,7 +576,6 @@ export default function ModelsPage() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
-                        <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
                       </div>
                     </div>
                     {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}
@@ -578,24 +589,15 @@ export default function ModelsPage() {
                             <span className="text-xs text-muted-foreground/50 w-6 font-mono">{idx + 1}</span>
                             <span className="text-xs font-mono flex-1 truncate">{fb.provider} · {fb.model}</span>
                             <div className="flex items-center gap-1">
-                              <button type="button" disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 border border-border rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Move up" data-testid={`fallback-move-up-${idx}`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-                                <span className="hidden sm:inline">Up</span>
-                              </button>
-                              <button type="button" disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 border border-border rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Move down" data-testid={`fallback-move-down-${idx}`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                                <span className="hidden sm:inline">Down</span>
-                              </button>
-                              <button type="button" onClick={() => removeFallback(idx)} className="flex items-center gap-1 px-2 py-1 text-xs bg-destructive/10 hover:bg-destructive/20 border border-destructive/20 text-destructive rounded transition-colors" aria-label="Remove" data-testid={`fallback-remove-${idx}`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                <span className="hidden sm:inline">Remove</span>
-                              </button>
+                              <Button size="sm" outlined disabled={idx === 0} onClick={() => idx > 0 && moveFallback(idx, idx - 1)} className="text-xs cursor-pointer" prefix={<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>} data-testid={`fallback-move-up-${idx}`}>Up</Button>
+                              <Button size="sm" outlined disabled={idx === fallbacks.length - 1} onClick={() => idx < fallbacks.length - 1 && moveFallback(idx, idx + 1)} className="text-xs cursor-pointer" prefix={<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>} data-testid={`fallback-move-down-${idx}`}>Down</Button>
+                              <Button size="sm" outlined onClick={() => setRemoveConfirmIdx(idx)} className="text-xs cursor-pointer bg-destructive/10 hover:bg-destructive/20 border-destructive/20 text-destructive" prefix={<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>} data-testid={`fallback-remove-${idx}`}>Remove</Button>
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
-                    {fallbackError && <div className="text-[10px] text-destructive" data-testid="fallback-error">{fallbackError}</div>}
+                    <Toast toast={toast} />
                     {pickerFallback && (
                       <ModelPickerDialog
                         key={`picker-fallback-${saveKey}`} loader={api.getModelOptions} alwaysGlobal confirmLabel="Save" title="Add Fallback Provider"
@@ -603,6 +605,18 @@ export default function ModelsPage() {
                         onClose={() => setPickerFallback(null)}
                       />
                     )}
+                    <ConfirmDialog
+                      open={removeConfirmIdx !== null}
+                      title="Remove Fallback Provider"
+                      description="Are you sure you want to remove this fallback provider from the chain?"
+                      confirmLabel="Remove"
+                      destructive
+                      loading={removeLoading}
+                      onConfirm={() => {
+                        if (removeConfirmIdx !== null) removeFallback(removeConfirmIdx);
+                      }}
+                      onCancel={() => setRemoveConfirmIdx(null)}
+                    />
                   </CardContent>
                 </Card>
 
