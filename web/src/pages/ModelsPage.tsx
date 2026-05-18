@@ -321,14 +321,16 @@ function AuxiliaryTasksPanel({
   return (
     <>
       <Card>
-        <CardContent className="py-4 space-y-2">
-          <div className="flex items-center justify-between gap-3">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <Cpu className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs font-medium uppercase tracking-wider">Auxiliary Tasks</span>
-              <span className="text-[10px] text-muted-foreground/60">{aux?.tasks.length ?? AUX_TASKS.length} tasks</span>
+              <CardTitle className="text-sm">Auxiliary Tasks</CardTitle>
+              <span className="text-[10px] text-muted-foreground">model assignments per task</span>
             </div>
           </div>
+        </CardHeader>
+        <CardContent className="space-y-3 pt-3">
           <div className="space-y-1 mt-3">
             {AUX_TASKS.map((t) => {
               const cur = aux?.tasks.find((a) => a.task === t.key);
