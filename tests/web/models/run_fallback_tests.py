@@ -2,6 +2,10 @@
 from playwright.async_api import async_playwright
 
 import asyncio
+import os
+
+DASHBOARD_PORT = os.environ.get("HERMES_TEST_DASHBOARD_PORT", "9119")
+DASHBOARD_URL = f"http://127.0.0.1:{DASHBOARD_PORT}"
 
 
 async def main():
@@ -14,7 +18,7 @@ async def main():
         page = await context.new_page()
 
         # Get the session token from the running dashboard
-        await page.goto("http://127.0.0.1:9119")
+        await page.goto(DASHBOARD_URL)
         token = await page.evaluate("""() => {
             const match = document.body.innerHTML.match(/__HERMES_SESSION_TOKEN__="([^"]+)"/);
             return match ? match[1] : null;
@@ -26,7 +30,7 @@ async def main():
             """)
 
         # Navigate to the Models page
-        await page.goto("http://127.0.0.1:9119/models")
+        await page.goto(f"{DASHBOARD_URL}/models")
         await page.wait_for_timeout(2000)  # Wait for data to load
 
         # Test 1: Fallback chain section exists

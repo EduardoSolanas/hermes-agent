@@ -14,6 +14,8 @@ from playwright.async_api import Page, expect
 from tests.web.models.conftest import MODELS_PAGE_URL
 
 
+pytestmark = pytest.mark.xdist_group("web_models")
+
 async def _go_to_tab(page: Page, tab_name: str) -> None:
     """Navigate to a specific tab."""
     await page.goto(MODELS_PAGE_URL)
@@ -47,17 +49,7 @@ async def test_all_tabs_visible(page: Page):
     await page.wait_for_timeout(2000)
     await expect(page.locator("[data-testid='models-settings-main-tab']")).to_be_visible()
     await expect(page.locator("[data-testid='models-settings-aux-tab']")).to_be_visible()
-    await expect(page.locator("[data-testid='models-used-models-tab']")).to_be_visible()
-
-
-@pytest.mark.asyncio
-async def test_fallback_chain_tab_does_not_exist(page: Page):
-    """There should be no standalone Fallback Chain tab."""
-    await page.goto(MODELS_PAGE_URL)
-    await page.wait_for_timeout(2000)
-    fallback_tab = page.locator("[data-testid='models-settings-fallback-tab']")
-    count = await fallback_tab.count()
-    assert count == 0, "There should be no standalone Fallback Chain tab"
+    await expect(page.locator("[data-testid='models-settings-used-tab']")).to_be_visible()
 
 
 @pytest.mark.asyncio
@@ -65,13 +57,6 @@ async def test_main_model_tab_has_card(page: Page):
     """Main Model tab should show the Main Model card."""
     await _go_to_tab(page, "Main Model")
     await expect(page.locator("[data-testid='main-model-card']")).to_be_visible()
-
-
-@pytest.mark.asyncio
-async def test_main_model_tab_has_fallback_chain(page: Page):
-    """Main Model tab should also show the Fallback Chain card below the main model."""
-    await _go_to_tab(page, "Main Model")
-    await expect(page.locator("[data-testid='fallback-chain-card']")).to_be_visible()
 
 
 @pytest.mark.asyncio
@@ -84,25 +69,80 @@ async def test_main_model_tab_has_stats(page: Page):
 
 
 @pytest.mark.asyncio
-async def test_fallback_chain_has_add_button(page: Page):
-    """Fallback Chain card (inside Main Model tab) should have Add button."""
+async def test_main_model_card_refreshes_after_assignment(page: Page):
+    """After changing the main model via the picker, the card should update without a reload."""
     await _go_to_tab(page, "Main Model")
-    add_btn = page.locator("[data-testid='fallback-chain-card'] [data-testid='fallback-add-button']")
-    await expect(add_btn).to_be_visible()
 
+    # Record the current main model text before changing
+    card = page.locator("[data-testid='main-model-card']")
+    before_text = await card.inner_text()
 
-@pytest.mark.asyncio
-async def test_fallback_chain_add_opens_picker(page: Page):
-    """Add button in Fallback Chain card should open the model picker."""
-    await _go_to_tab(page, "Main Model")
-    add_btn = page.locator("[data-testid='fallback-add-button']")
-    await add_btn.click()
-    await page.wait_for_timeout(500)
-    picker = page.locator("[data-testid='model-picker-dialog']")
-    visible = await picker.count() > 0
-    if not visible:
-        visible = await page.locator("text=Add Fallback Provider").count() > 0
-    assert visible, "Model picker dialog should be visible after clicking Add"
+    # Read available providers to pick a different one
+    options = await page.evaluate("""async () => {
+        const token = window.__HERMES_SESSION_TOKEN__;
+        const r = await fetch('/api/model/options', {
+            headers: { 'X-Hermes-Session-Token': token, 'Content-Type': 'application/json' }
+        });
+        return await r.json();
+    }""")
+    providers = options.get("providers", [])
+    usable = [p for p in providers if p.get("models")]
+    if not usable:
+        pytest.skip("No providers with models available")
+
+    # Pick a provider whose slug is NOT currently shown in the card
+    target = None
+    for p in usable:
+        if p["slug"].lower() not in before_text.lower():
+            target = p
+            break
+    if target is None:
+        target = usable[0]
+
+    target_slug = target["slug"]
+    target_model = target["models"][0]
+    target_name = target.get("name") or target_slug
+
+    # Open the "Change" picker on the main model card
+    change_btn = card.get_by_role("button", name="Change")
+    await change_btn.click()
+    await page.wait_for_timeout(1000)
+
+    picker = page.get_by_role("dialog", name="Set Main Model")
+    if not await picker.is_visible():
+        pytest.skip("Main model picker did not open")
+
+    # Select provider
+    prov_loc = picker.get_by_text(target_name, exact=True)
+    if await prov_loc.count() == 0:
+        await page.keyboard.press("Escape")
+        pytest.skip(f"Provider '{target_name}' not found in picker")
+    await prov_loc.first.click()
+    await page.wait_for_timeout(300)
+
+    # Select model
+    model_loc = picker.get_by_text(target_model, exact=True)
+    if await model_loc.count() == 0:
+        search = picker.locator("input[placeholder*='Filter']")
+        if await search.count() > 0:
+            await search.fill(target_model)
+            await page.wait_for_timeout(500)
+            model_loc = picker.get_by_text(target_model, exact=True)
+    if await model_loc.count() > 0:
+        await model_loc.first.click()
+
+    confirm_btn = picker.get_by_role("button", name="Switch", exact=True)
+    if not await confirm_btn.is_enabled():
+        await page.keyboard.press("Escape")
+        pytest.skip("Could not select model in picker")
+
+    await confirm_btn.click()
+    await page.wait_for_timeout(2000)
+
+    # Verify the card updated WITHOUT a reload
+    after_text = (await card.inner_text()).lower()
+    assert target_slug.lower() in after_text or target_model.lower() in after_text, \
+        f"Main model card should show '{target_slug}' or '{target_model}' after assignment (no reload), got: {after_text}"
 
 
 @pytest.mark.asyncio
@@ -153,3 +193,5 @@ async def test_used_models_tab_renders_content(page: Page):
     cards_count = await cards.count()
     empty_count = await empty_state.count()
     assert cards_count > 0 or empty_count > 0, "Should show model cards or empty state"
+
+

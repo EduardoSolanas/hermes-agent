@@ -7,6 +7,8 @@ from playwright.async_api import Page, expect
 from tests.web.models.conftest import MODELS_PAGE_URL
 
 
+pytestmark = pytest.mark.xdist_group("web_models")
+
 async def _go_to_used_models(page: Page) -> None:
     await page.goto(MODELS_PAGE_URL)
     await page.locator("[data-testid='models-settings-used-tab']").click()

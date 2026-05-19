@@ -386,7 +386,7 @@ export default function ModelsPage() {
 
   useEffect(() => {
     setFallbackLoading(true);
-    api.getConfiguredModels().then((cfg) => { fallbacksRef.current = cfg.fallbacks; setFallbacks(cfg.fallbacks); }).catch(() => {}).finally(() => setFallbackLoading(false));
+    api.getConfiguredModels().then((cfg) => { fallbacksRef.current = cfg.fallbacks; setFallbacks(cfg.fallbacks); }).catch((e) => { setFallbackError(e instanceof Error ? e.message : String(e)); }).finally(() => setFallbackLoading(false));
   }, []);
 
   useEffect(() => {
@@ -401,7 +401,7 @@ export default function ModelsPage() {
 
   const applyAssignment = async ({ scope, task, provider, model }: { scope: "main" | "auxiliary"; task: string; provider: string; model: string }) => {
     await api.setModelAssignment({ scope, task, provider, model });
-    setSaveKey((k) => k + 1);
+    onAssigned();
   };
 
   const moveFallback = async (from: number, to: number) => {
@@ -423,17 +423,18 @@ export default function ModelsPage() {
     fallbacksRef.current = next;
     setFallbacks(next);
     setPickerFallback(null);
+    setFallbackBusy(true); setFallbackError(null);
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); }
+    catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
+    finally { setFallbackBusy(false); }
   };
 
-  const removeFallback = (idx: number) => {
+  const removeFallback = async (idx: number) => {
     const next = fallbacksRef.current.filter((_, i) => i !== idx);
     fallbacksRef.current = next;
     setFallbacks(next);
-  };
-
-  const saveFallbacks = async () => {
     setFallbackBusy(true); setFallbackError(null);
-    try { await api.setFallbackChain(fallbacksRef.current); setSaveKey((k) => k + 1); }
+    try { await api.setFallbackChain(next); setSaveKey((k) => k + 1); }
     catch (e) { setFallbackError(e instanceof Error ? e.message : String(e)); }
     finally { setFallbackBusy(false); }
   };
@@ -553,7 +554,6 @@ export default function ModelsPage() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Button size="sm" outlined onClick={() => setPickerFallback({ kind: "fallback" })} disabled={fallbackBusy} className="text-xs" data-testid="fallback-add-button">Add</Button>
-                        <Button size="sm" outlined onClick={saveFallbacks} disabled={fallbackBusy} className="text-xs" data-testid="fallback-save-button" prefix={fallbackBusy ? <Spinner /> : null}>Save</Button>
                       </div>
                     </div>
                     {fallbackLoading && <div className="flex items-center justify-center py-4"><Spinner className="text-xs text-muted-foreground" /></div>}

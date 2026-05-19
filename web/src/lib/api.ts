@@ -100,7 +100,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getConfiguredModels: () =>
-    fetchJSON<ConfiguredModelsResponse>("/api/model/configured"),
+    fetchJSON<ConfiguredModelsResponse>("/api/model/fallbacks"),
   setFallbackChain: (fallbacks: { provider: string; model: string; base_url?: string }[]) =>
     fetchJSON<SetFallbacksResponse>("/api/model/fallbacks", {
       method: "PUT",
