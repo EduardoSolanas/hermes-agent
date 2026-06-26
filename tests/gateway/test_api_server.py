@@ -1370,7 +1370,7 @@ class TestChatCompletionsEndpoint:
                 resp = await cli.post(
                     "/v1/chat/completions",
                     json={
-                        "model": "test",
+                        "model": "hermes-agent",
                         "messages": [{"role": "user", "content": "do the thing"}],
                         "stream": True,
                     },

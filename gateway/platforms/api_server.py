@@ -839,7 +839,7 @@ class APIServerAdapter(BasePlatformAdapter):
         """Resolve a request model into the concrete runtime model Hermes should use."""
         requested = str(requested_model or "").strip()
 
-        if not requested or requested == "hermes-agent":
+        if not requested or requested in {"hermes-agent", self._model_name}:
             default_model = ""
             runtime_kwargs: Dict[str, Any] = {}
             try:
@@ -849,8 +849,8 @@ class APIServerAdapter(BasePlatformAdapter):
             except Exception:
                 default_model = ""
             return {
-                "requested_model": "hermes-agent",
-                "agent_model": default_model or "hermes-agent",
+                "requested_model": requested or self._model_name,
+                "agent_model": default_model or self._model_name,
                 "agent_runtime_kwargs": runtime_kwargs,
             }
 
@@ -892,7 +892,7 @@ class APIServerAdapter(BasePlatformAdapter):
         model: Optional[str] = None,
         runtime_kwargs_override: Optional[Dict[str, Any]] = None,
         tool_start_callback=None,
-        tool_complete_callback=None, (feat(api-server): expose active configured models)
+        tool_complete_callback=None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -992,18 +992,18 @@ class APIServerAdapter(BasePlatformAdapter):
         if auth_err:
             return auth_err
 
-        model_cards = [self._model_card("hermes-agent", owned_by="hermes")]
+        model_cards = [self._model_card(self._model_name, owned_by="hermes")]
 
         for record in self._get_served_model_records():
             model_id = str(record.get("public_model_id") or "").strip()
-            if not model_id or model_id == "hermes-agent":
+            if not model_id or model_id == self._model_name:
                 continue
             provider = str(record.get("provider") or "hermes").strip() or "hermes"
             model_cards.append(self._model_card(model_id, owned_by=provider))
 
         return web.json_response({
             "object": "list",
-            "data": model_cards, (feat(api-server): expose active configured models)
+            "data": model_cards,
         })
 
     async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
@@ -1120,7 +1120,7 @@ class APIServerAdapter(BasePlatformAdapter):
             # history already set from request body above
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        model_name = resolved_model["requested_model"] (feat(api-server): expose active configured models)
+        model_name = resolved_model["requested_model"]
         created = int(time.time())
 
         if stream:
@@ -2049,7 +2049,7 @@ class APIServerAdapter(BasePlatformAdapter):
             "object": "response",
             "status": "completed",
             "created_at": created_at,
-            "model": resolved_model["requested_model"], (feat(api-server): expose active configured models)
+            "model": resolved_model["requested_model"],
             "output": output_items,
             "usage": {
                 "input_tokens": usage.get("input_tokens", 0),
