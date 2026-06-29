@@ -32,7 +32,9 @@ import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
-import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
+<<<<<<< HEAD
+=======
+>>>>>>> 12b54a085 (feat(web): improve models fallback management)
 import { TabsList, TabsTrigger } from "@nous-research/ui/ui/components/tabs";
 
 const VALID_TABS = new Set(["main-model", "auxiliary-tasks", "used-models"]);
@@ -568,7 +570,9 @@ function AuxiliaryTasksPanel({
 /* ─── Page ─── */
 
 export default function ModelsPage() {
-  const [pendingReloadModel, setPendingReloadModel] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
+>>>>>>> 12b54a085 (feat(web): improve models fallback management)
   const [searchParams, setSearchParams] = useSearchParams();
   const defaultTab = getTabFromQuery(searchParams);
   const [activeTab, setActiveTab] = useState(defaultTab);
@@ -812,24 +816,8 @@ export default function ModelsPage() {
                     </div>
                     {picker && picker.kind === "main" && (
                       <ModelPickerDialog
-                        key={`picker-${saveKey}`}
-                        loader={api.getModelOptions}
-                        alwaysGlobal
-                        title="Set Main Model"
-                        onApply={async ({ provider, model, confirmExpensiveModel }) => {
-                          const result = await api.setModelAssignment({
-                            confirm_expensive_model: confirmExpensiveModel,
-                            scope: "main",
-                            task: "",
-                            provider,
-                            model,
-                          });
-                          if (!result.confirm_required) {
-                            setPendingReloadModel(model.split("/").slice(-1)[0]);
-                            onAssigned();
-                          }
-                          return result;
-                        }}
+                        key={`picker-${saveKey}`} loader={api.getModelOptions} alwaysGlobal title="Set Main Model"
+                        onApply={async ({ provider, model }) => { await applyAssignment({ scope: "main", task: "", provider, model }); }}
                         onClose={() => setPicker(null)}
                       />
                     )}
@@ -967,10 +955,6 @@ export default function ModelsPage() {
             )}
           </div>
 
-      <ModelReloadConfirm
-        model={pendingReloadModel}
-        onCancel={() => setPendingReloadModel(null)}
-      />
       <PluginSlot name="models:bottom" />
     </div>
   );
